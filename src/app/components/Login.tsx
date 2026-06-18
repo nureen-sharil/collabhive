@@ -2,10 +2,6 @@ import { useState } from "react";
 import { useNavigate } from "../router";
 import { Mail, Lock, Eye, EyeOff, AlertCircle, CheckCircle } from "lucide-react";
 import { PhoneFrame } from "./PhoneFrame";
-// COMMENT: Import authentication API and auth context to manage user login and data storage
-import { authAPI } from "../../lib/api";
-import { authStore } from "../context/AuthContext";
-import { apiClient } from "../../lib/apiClient";
 
 type FieldState = "idle" | "error" | "success";
 type FormState  = "idle" | "loading" | "success" | "error";
@@ -46,30 +42,22 @@ export function Login() {
 
   const canSubmit = isValidEmail(email) && password.length >= 8;
 
-  const handleLogin = async () => {
+  const handleLogin = () => {
     setTouch({ email: true, password: true });
     if (!canSubmit) return;
     setFormState("loading");
     setServerError("");
 
-    try {
-      // COMMENT: Call the real authentication API with user credentials
-      const response = await authAPI.login({ email, password });
-      
-      // COMMENT: Store the JWT token in localStorage and in the API client
-      apiClient.setToken(response.access_token);
-      
-      // COMMENT: Store the authenticated user's data (including name) in auth context and localStorage
-      authStore.setCurrentUser(response.user);
-      
+    setTimeout(() => {
+      // Simulate: wrong credentials for demo
+      if (email === "wrong@email.com") {
+        setFormState("error");
+        setServerError("Incorrect email or password. Please try again.");
+        return;
+      }
       setFormState("success");
-      // COMMENT: Wait for UI feedback, then redirect to dashboard
       setTimeout(() => navigate("/"), 1800);
-    } catch (err: any) {
-      // COMMENT: Handle authentication errors from the API
-      setFormState("error");
-      setServerError(err.message || "Incorrect email or password. Please try again.");
-    }
+    }, 1500);
   };
 
   const inputBox = (hasError: boolean, hasFocus?: boolean): React.CSSProperties => ({

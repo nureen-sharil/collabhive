@@ -1,120 +1,99 @@
 import { useState, useEffect } from "react";
-import { taskAPI } from "../../lib/api";
 
-export type Priority = "high" | "medium" | "low";
+export type Priority   = "High" | "Medium" | "Low";
 export type TaskStatus = "todo" | "inprogress" | "done";
 
 export interface Task {
-  id: number;
+  id: string;
   title: string;
   description: string;
   priority: Priority;
   status: TaskStatus;
-  due_date: string | null;
-  progress: number;
-  workspace_id: number;
-  creator_id: number;
-  created_at: string;
-  updated_at: string;
-  assignees: any[];
-  comments: any[];
+  dueDate: string;
+  dueTime: string;
+  assignee: string;
+  assigneeName: string;
+  assigneeColor: string;
+  comments: number;
+  progress?: number;
+  workspaceId: string;
 }
 
 // ─── module-level singleton ───────────────────────────────────────────────────
 type Listener = () => void;
 const _listeners = new Set<Listener>();
 
-let _tasks: Task[] = [];
-let _loading = true;
-let _error: string | null = null;
+let _tasks: Task[] = [
+  {
+    id: "1", workspaceId: "1",
+    title: "Design system documentation", description: "Document all components and usage guidelines.",
+    priority: "High", status: "todo", dueDate: "Jun 15", dueTime: "10:00 AM",
+    assignee: "JD", assigneeName: "John Doe", assigneeColor: "#2563EB", comments: 3,
+  },
+  {
+    id: "2", workspaceId: "1",
+    title: "User research interviews", description: "Conduct interviews with 5 target users.",
+    priority: "Medium", status: "todo", dueDate: "Jun 16", dueTime: "02:00 PM",
+    assignee: "SM", assigneeName: "Sara Miller", assigneeColor: "#7C3AED", comments: 5,
+  },
+  {
+    id: "3", workspaceId: "1",
+    title: "Database schema update", description: "Update schema for new user profile fields.",
+    priority: "High", status: "inprogress", dueDate: "Jun 14", dueTime: "09:00 AM",
+    assignee: "AB", assigneeName: "Alex Brown", assigneeColor: "#DB2777", comments: 2, progress: 60,
+  },
+  {
+    id: "4", workspaceId: "1",
+    title: "API endpoint testing", description: "Write integration tests for all REST endpoints.",
+    priority: "Medium", status: "inprogress", dueDate: "Jun 17", dueTime: "11:00 AM",
+    assignee: "JD", assigneeName: "John Doe", assigneeColor: "#2563EB", comments: 1, progress: 35,
+  },
+  {
+    id: "5", workspaceId: "1",
+    title: "Landing page redesign", description: "Implement new marketing landing page design.",
+    priority: "Low", status: "done", dueDate: "Jun 12", dueTime: "03:00 PM",
+    assignee: "SM", assigneeName: "Sara Miller", assigneeColor: "#7C3AED", comments: 8,
+  },
+  {
+    id: "6", workspaceId: "1",
+    title: "User authentication flow", description: "Implement OAuth2 login and session handling.",
+    priority: "High", status: "done", dueDate: "Jun 11", dueTime: "10:00 AM",
+    assignee: "AB", assigneeName: "Alex Brown", assigneeColor: "#DB2777", comments: 4,
+  },
+];
 
-function _notify() {
-  _listeners.forEach((l) => l());
-}
+function _notify() { _listeners.forEach((l) => l()); }
 
 export const taskStore = {
   getAll: () => _tasks,
-  get: (id: number) => _tasks.find((t) => t.id === id),
-  setTasks: (tasks: Task[]) => {
-    _tasks = tasks;
+  get: (id: string) => _tasks.find((t) => t.id === id),
+  add: (task: Omit<Task, "id" | "comments">) => {
+    _tasks = [{ ...task, id: Date.now().toString(), comments: 0 }, ..._tasks];
     _notify();
   },
-  setLoading: (loading: boolean) => {
-    _loading = loading;
-    _notify();
-  },
-  setError: (error: string | null) => {
-    _error = error;
+  update: (id: string, patch: Partial<Task>) => {
+    _tasks = _tasks.map((t) => (t.id === id ? { ...t, ...patch } : t));
     _notify();
   },
 };
 
 // ─── hook ─────────────────────────────────────────────────────────────────────
-export function useTasks(workspaceId?: number) {
+export function useTasks() {
   const [, rerender] = useState(0);
-  const [isLoading, setIsLoading] = useState(_loading);
-  const [error, setError] = useState(_error);
 
   useEffect(() => {
     const listener: Listener = () => rerender((n) => n + 1);
     _listeners.add(listener);
-
-    // Fetch tasks if workspaceId provided
-    if (workspaceId) {
-      const fetchTasks = async () => {
-        try {
-          taskStore.setLoading(true);
-          const tasks = await taskAPI.list(workspaceId);
-          taskStore.setTasks(tasks);
-          taskStore.setLoading(false);
-        } catch (err: any) {
-          taskStore.setError(err.message);
-          taskStore.setLoading(false);
-        }
-      };
-      fetchTasks();
-    }
-
-    return () => {
-      _listeners.delete(listener);
-    };
-  }, [workspaceId]);
+    return () => { _listeners.delete(listener); };
+  }, []);
 
   return {
     tasks: _tasks,
-    isLoading: _loading,
-    error: _error,
-    addTask: async (data: any) => {
-      try {
-        const newTask = await taskAPI.create(workspaceId!, data);
-        taskStore.setTasks([..._tasks, newTask]);
-        return newTask;
-      } catch (err: any) {
-        taskStore.setError(err.message);
-        throw err;
-      }
-    },
-    updateTask: async (id: number, data: any) => {
-      try {
-        const updated = await taskAPI.update(workspaceId!, id, data);
-        taskStore.setTasks(
-          _tasks.map((t) => (t.id === id ? updated : t))
-        );
-        return updated;
-      } catch (err: any) {
-        taskStore.setError(err.message);
-        throw err;
-      }
-    },
-    deleteTask: async (id: number) => {
-      try {
-        await taskAPI.delete(workspaceId!, id);
-        taskStore.setTasks(_tasks.filter((t) => t.id !== id));
-      } catch (err: any) {
-        taskStore.setError(err.message);
-        throw err;
-      }
-    },
-    getTask: (id: number) => _tasks.find((t) => t.id === id),
+    addTask:    taskStore.add,
+    updateTask: taskStore.update,
+    getTask:    taskStore.get,
   };
 }
+
+// Current user initials (for "My Tasks" filter)
+export const MY_INITIALS = "JD";

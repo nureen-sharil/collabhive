@@ -1,46 +1,59 @@
 import { useState, useEffect } from "react";
-import { workspaceAPI } from "../../lib/api";
 
 export interface Workspace {
-  id: number;
+  id: string;
   title: string;
   description: string;
   progress: number;
   status: "Not Started" | "In Progress" | "Completed";
   color: string;
-  deadline: string | null;
-  creator_id: number;
-  created_at: string;
-  updated_at: string;
-  members: any[];
+  members: string[];
+  deadline: string;
+  createdAt: string;
 }
 
 // ─── module-level singleton ───────────────────────────────────────────────────
 type Listener = () => void;
 const _listeners = new Set<Listener>();
 
-let _workspaces: Workspace[] = [];
-let _loading = true;
-let _error: string | null = null;
+let _workspaces: Workspace[] = [
+  {
+    id: "1", title: "Software Methodology Project",
+    description: "Agile software development methodology study",
+    progress: 65, status: "In Progress", color: "#2563EB",
+    members: ["JD", "SM", "AB"], deadline: "June 20, 2026", createdAt: "2026-05-01",
+  },
+  {
+    id: "2", title: "Software Testing Project",
+    description: "Comprehensive testing and QA processes",
+    progress: 30, status: "In Progress", color: "#7C3AED",
+    members: ["JD", "AB"], deadline: "June 28, 2026", createdAt: "2026-05-10",
+  },
+  {
+    id: "3", title: "UI/UX Case Study",
+    description: "Design research and user experience case study",
+    progress: 0, status: "Not Started", color: "#DB2777",
+    members: ["SM"], deadline: "July 5, 2026", createdAt: "2026-06-01",
+  },
+];
 
-function _notify() {
-  _listeners.forEach((l) => l());
-}
+function _notify() { _listeners.forEach((l) => l()); }
 
 // ─── public store API (no React) ─────────────────────────────────────────────
 export const workspaceStore = {
   getAll: () => _workspaces,
-  get: (id: number) => _workspaces.find((w) => w.id === id),
-  setWorkspaces: (workspaces: Workspace[]) => {
-    _workspaces = workspaces;
+  get: (id: string) => _workspaces.find((w) => w.id === id),
+  add: (data: Omit<Workspace, "id" | "progress" | "status" | "createdAt">): string => {
+    const id = Date.now().toString();
+    _workspaces = [
+      ..._workspaces,
+      { ...data, id, progress: 0, status: "Not Started", createdAt: new Date().toISOString().split("T")[0] },
+    ];
     _notify();
+    return id;
   },
-  setLoading: (loading: boolean) => {
-    _loading = loading;
-    _notify();
-  },
-  setError: (error: string | null) => {
-    _error = error;
+  remove: (id: string) => {
+    _workspaces = _workspaces.filter((w) => w.id !== id);
     _notify();
   },
 };
@@ -48,56 +61,17 @@ export const workspaceStore = {
 // ─── hook ─────────────────────────────────────────────────────────────────────
 export function useWorkspaces() {
   const [, rerender] = useState(0);
-  const [isLoading, setIsLoading] = useState(_loading);
-  const [error, setError] = useState(_error);
 
   useEffect(() => {
     const listener: Listener = () => rerender((n) => n + 1);
     _listeners.add(listener);
-
-    // Fetch workspaces
-    const fetchWorkspaces = async () => {
-      try {
-        workspaceStore.setLoading(true);
-        const workspaces = await workspaceAPI.list();
-        workspaceStore.setWorkspaces(workspaces);
-        workspaceStore.setLoading(false);
-      } catch (err: any) {
-        workspaceStore.setError(err.message);
-        workspaceStore.setLoading(false);
-      }
-    };
-
-    fetchWorkspaces();
-
-    return () => {
-      _listeners.delete(listener);
-    };
+    return () => { _listeners.delete(listener); };
   }, []);
 
   return {
     workspaces: _workspaces,
-    isLoading: _loading,
-    error: _error,
-    addWorkspace: async (data: any) => {
-      try {
-        const newWorkspace = await workspaceAPI.create(data);
-        workspaceStore.setWorkspaces([..._workspaces, newWorkspace]);
-        return newWorkspace;
-      } catch (err: any) {
-        workspaceStore.setError(err.message);
-        throw err;
-      }
-    },
-    getWorkspace: (id: number) => _workspaces.find((w) => w.id === id),
-    removeWorkspace: async (id: number) => {
-      try {
-        await workspaceAPI.delete(id);
-        workspaceStore.setWorkspaces(_workspaces.filter((w) => w.id !== id));
-      } catch (err: any) {
-        workspaceStore.setError(err.message);
-        throw err;
-      }
-    },
+    addWorkspace:    workspaceStore.add,
+    getWorkspace:    workspaceStore.get,
+    removeWorkspace: workspaceStore.remove,
   };
 }

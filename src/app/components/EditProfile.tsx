@@ -12,8 +12,29 @@ const AVATAR_COLORS = [
 export function EditProfile() {
   const navigate = useNavigate();
 
-  const [name,     setName]     = useState("Seroja Jane");
-  const [email,    setEmail]    = useState("seroja.jane@collabhive.io");
+  // Initialize with values from localStorage if available
+  const getInitialUser = () => {
+    try {
+      const userStr = localStorage.getItem("currentUser");
+      if (userStr) {
+        const parsed = JSON.parse(userStr);
+        if (parsed && typeof parsed === "object") {
+          return {
+            name: parsed.name || "Seroja Jane",
+            email: parsed.email || "seroja.jane@collabhive.io"
+          };
+        }
+      }
+    } catch (error) {
+      console.error("Failed to parse initial user details:", error);
+    }
+    return { name: "Seroja Jane", email: "seroja.jane@collabhive.io" };
+  };
+
+  const initialUser = getInitialUser();
+
+  const [name,     setName]     = useState(initialUser.name);
+  const [email,    setEmail]    = useState(initialUser.email);
   const [role,     setRole]     = useState("Frontend Developer");
   const [phone,    setPhone]    = useState("+1 234 567 8900");
   const [location, setLocation] = useState("Kuala Lumpur, Malaysia");
@@ -21,9 +42,15 @@ export function EditProfile() {
   const [avatarColor, setAvatarColor] = useState("#2563EB");
   const [saved,    setSaved]    = useState(false);
 
-  const initials = name.trim().split(" ").map((w) => w[0]?.toUpperCase() ?? "").slice(0, 2).join("");
+  const initials = String(name).trim().split(" ").map((w) => w[0]?.toUpperCase() ?? "").slice(0, 2).join("");
 
-  const handleSave = () => navigate("/");
+  const handleSave = () => {
+    // Save updated user profile back to localStorage
+    const userStr = localStorage.getItem("currentUser");
+    const user = userStr ? JSON.parse(userStr) : {};
+    localStorage.setItem("currentUser", JSON.stringify({ ...user, name, email }));
+    navigate("/");
+  };
 
   const inputStyle = (val: string): React.CSSProperties => ({
     width: "100%", border: `1.5px solid ${val ? "#E5E7EB" : "#E5E7EB"}`,

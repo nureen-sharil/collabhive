@@ -13,10 +13,20 @@ import { GlobalToast } from "./GlobalToast";
 import { useWorkspaces } from "../context/WorkspaceContext";
 
 // ─── Left Sidebar ─────────────────────────────────────────────────────────────
-function Sidebar({ onClose }: { onClose: () => void }) {
+function Sidebar({ onClose, user }: { onClose: () => void, user: { name: string, email: string } }) {
   const navigate = useNavigate();
 
   const goTo = (path: string) => { onClose(); navigate(path); };
+
+  // Compute initials for the avatar based on the user's name
+  const getInitials = (name: string) => {
+    if (!name) return "U";
+    const parts = String(name).trim().split(" ");
+    if (parts.length > 1 && parts[0] && parts[1]) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return (String(name)[0] || "U").toUpperCase();
+  };
 
   const navItems = [
     { icon: Home,       label: "Dashboard",  active: true,  path: "/"    },
@@ -52,14 +62,16 @@ function Sidebar({ onClose }: { onClose: () => void }) {
         <div style={{ padding: "48px 20px 20px", background: "linear-gradient(135deg,#1E3A5F,#2563EB)" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
             <div style={{ width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 700, color: "white" }}>
-              SJ
+              {/* Display dynamically computed initials */}
+              {getInitials(user.name)}
             </div>
             <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: "50%", background: "rgba(255,255,255,0.15)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <X size={16} color="white" />
             </button>
           </div>
-          <p style={{ fontSize: 16, fontWeight: 700, color: "white", marginBottom: 2 }}>Seroja Jane</p>
-          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>seroja.jane@collabhive.io</p>
+          {/* Display actual logged-in user name and email */}
+          <p style={{ fontSize: 16, fontWeight: 700, color: "white", marginBottom: 2 }}>{user.name}</p>
+          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>{user.email}</p>
         </div>
 
         {/* Nav items */}
@@ -110,7 +122,12 @@ function Sidebar({ onClose }: { onClose: () => void }) {
         {/* Sign out */}
         <div style={{ padding: "12px 12px 32px", borderTop: "1px solid #F3F4F6" }}>
           <button
-            onClick={() => { onClose(); goTo("/login"); }}
+            onClick={() => { 
+              // Clear current user on sign out
+              localStorage.removeItem("currentUser");
+              onClose(); 
+              goTo("/login"); 
+            }}
             style={{ width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 12px",borderRadius:12,border:"none",cursor:"pointer",background:"#FEF2F2" }}
           >
             <LogOut size={18} color="#EF4444" strokeWidth={2} />
@@ -254,6 +271,27 @@ export function Dashboard() {
   const navigate = useNavigate();
   const { workspaces, removeWorkspace } = useWorkspaces();
 
+  // State to hold the current user details, default to placeholder if nothing in localStorage
+  const [currentUser, setCurrentUser] = useState({ name: "Seroja Jane", email: "seroja.jane@collabhive.io" });
+
+  useEffect(() => {
+    // Retrieve the authenticated user from localStorage when component mounts
+    try {
+      const userStr = localStorage.getItem("currentUser");
+      if (userStr) {
+        const parsed = JSON.parse(userStr);
+        if (parsed && typeof parsed === "object") {
+          setCurrentUser({
+            name: parsed.name || "Seroja Jane",
+            email: parsed.email || "seroja.jane@collabhive.io"
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Failed to parse user details:", error);
+    }
+  }, []);
+
   const [showNotification, setShowNotification] = useState(false);
   const [showSidebar,      setShowSidebar]      = useState(false);
   const [searchQuery,      setSearchQuery]      = useState("");
@@ -324,7 +362,8 @@ export function Dashboard() {
       >
         {/* Greeting */}
         <h2 style={{ fontSize:22,fontWeight:700,color:"#1E3A5F",lineHeight:1.2,marginBottom:20 }}>
-          Good Evening, Seroja Jane
+          {/* Display actual logged-in user name */}
+          Good Evening, {currentUser.name}
         </h2>
 
         {/* Search bar */}
@@ -550,7 +589,7 @@ export function Dashboard() {
 
       {/* Sidebar */}
       <AnimatePresence>
-        {showSidebar && <Sidebar onClose={() => setShowSidebar(false)} />}
+        {showSidebar && <Sidebar onClose={() => setShowSidebar(false)} user={currentUser} />}
       </AnimatePresence>
 
       {/* Delete confirmation modal */}

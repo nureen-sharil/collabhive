@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { useNavigate } from "../router";
 import {
   ArrowLeft, HelpCircle, Bell, Lock, UserCircle,
@@ -17,6 +18,37 @@ interface SettingRow {
 
 export function Settings() {
   const navigate = useNavigate();
+
+  // State to hold the current user details for the settings banner
+  const [currentUser, setCurrentUser] = useState({ name: "Seroja Jane", email: "seroja.jane@collabhive.io" });
+
+  useEffect(() => {
+    // Retrieve the authenticated user from localStorage when component mounts
+    try {
+      const userStr = localStorage.getItem("currentUser");
+      if (userStr) {
+        const parsed = JSON.parse(userStr);
+        if (parsed && typeof parsed === "object") {
+          setCurrentUser({
+            name: parsed.name || "Seroja Jane",
+            email: parsed.email || "seroja.jane@collabhive.io"
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Failed to parse user details:", error);
+    }
+  }, []);
+
+  // Compute initials for the avatar based on the user's name
+  const getInitials = (name: string) => {
+    if (!name) return "U";
+    const parts = String(name).trim().split(" ");
+    if (parts.length > 1 && parts[0] && parts[1]) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return (String(name)[0] || "U").toUpperCase();
+  };
 
   const sections: { title: string; rows: SettingRow[] }[] = [
     {
@@ -67,11 +99,13 @@ export function Settings() {
       <div style={{ background: "linear-gradient(135deg,#1E3A5F,#2563EB)", padding: "18px 20px", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 700, color: "white" }}>
-            SJ
+            {/* Display dynamically computed initials */}
+            {getInitials(currentUser.name)}
           </div>
           <div>
-            <p style={{ fontSize: 16, fontWeight: 700, color: "white" }}>Seroja Jane</p>
-            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>seroja.jane@collabhive.io</p>
+            {/* Display actual logged-in user name and email */}
+            <p style={{ fontSize: 16, fontWeight: 700, color: "white" }}>{currentUser.name}</p>
+            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>{currentUser.email}</p>
           </div>
         </div>
       </div>

@@ -42,22 +42,39 @@ export function Login() {
 
   const canSubmit = isValidEmail(email) && password.length >= 8;
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     setTouch({ email: true, password: true });
     if (!canSubmit) return;
     setFormState("loading");
     setServerError("");
 
-    setTimeout(() => {
-      // Simulate: wrong credentials for demo
-      if (email === "wrong@email.com") {
+    try {
+      // Authenticate with your backend API
+      const response = await fetch("http://localhost:8000/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password }),
+      });
+
+      if (!response.ok) {
         setFormState("error");
         setServerError("Incorrect email or password. Please try again.");
         return;
       }
+      
+      const data = await response.json();
+
+      // Save the user data returned from the database to persist the session
+      localStorage.setItem("currentUser", JSON.stringify({ name: data.name, email: data.email }));
+
       setFormState("success");
+      // Redirects to the Dashboard screen
       setTimeout(() => navigate("/"), 1800);
-    }, 1500);
+    } catch (error) {
+      console.error(error);
+      setFormState("error");
+      setServerError("Could not connect to the server. Please try again later.");
+    }
   };
 
   const inputBox = (hasError: boolean, hasFocus?: boolean): React.CSSProperties => ({

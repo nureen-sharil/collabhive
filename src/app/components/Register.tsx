@@ -47,6 +47,7 @@ export function Register() {
   const [loading,     setLoading]     = useState(false);
   const [success,     setSuccess]     = useState(false);
   const [emailTaken,  setEmailTaken]  = useState(false);
+  const [serverError, setServerError] = useState("");
 
   const strength = getStrength(password);
   const sm = STRENGTH_META[strength];
@@ -64,21 +65,39 @@ export function Register() {
 
   const canSubmit = name.trim() && isValidEmail(email) && password.length >= 8 && strength >= 2 && confirm === password;
 
-  const handleRegister = () => {
+  const handleRegister = async () => {
     setTouch({ name: true, email: true, password: true, confirm: true });
     if (!canSubmit) return;
 
     setLoading(true);
-    setTimeout(() => {
-      if (email === "taken@email.com") {
-        setEmailTaken(true);
+    setServerError("");
+
+    try {
+      // Send user data to your actual backend API to save it in the database
+      const response = await fetch("http://localhost:8000/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), email: email.trim(), password }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 409) {
+          setEmailTaken(true);
+        } else {
+          setServerError("Server error. Please check your backend.");
+        }
         setLoading(false);
         return;
       }
+      
       setLoading(false);
       setSuccess(true);
       setTimeout(() => navigate("/login"), 2200);
-    }, 1600);
+    } catch (error) {
+      console.error(error);
+      setLoading(false);
+      setServerError("Could not connect to the server. Is the backend running?");
+    }
   };
 
   const inputBox = (hasError: boolean): React.CSSProperties => ({
@@ -126,6 +145,14 @@ export function Register() {
         </div>
 
         <div style={{ padding: "24px 20px" }}>
+        {/* Server error banner */}
+        {serverError && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#FEE2E2", border: "1px solid #FECACA", borderRadius: 12, padding: "12px 14px", marginBottom: 20 }}>
+            <AlertCircle size={16} color="#DC2626" style={{ flexShrink: 0 }} />
+            <p style={{ fontSize: 13, color: "#B91C1C", flex: 1 }}>{serverError}</p>
+          </div>
+        )}
+
           {/* Full Name */}
           <div style={{ marginBottom: 14 }}>
             <label style={{ fontSize: 13, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>Full Name</label>

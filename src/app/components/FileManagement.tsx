@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, type MouseEvent } from "react";
 import { useNavigate, useParams } from "../router";
 import {
   ArrowLeft, Search, Plus, FileText, FileSpreadsheet,
@@ -16,6 +16,20 @@ interface FileItem {
   size: string;
   lastModified: string;
   owner?: string;
+  mimeType?: string;
+  dataUrl?: string;
+  textContent?: string;
+}
+
+type FilePreviewKind = "image" | "pdf" | "text" | "unsupported";
+
+function getStoredCurrentUser() {
+  try {
+    const raw = localStorage.getItem("currentUser") ?? localStorage.getItem("collabhive.auth.currentUser");
+    return raw ? JSON.parse(raw) as { name?: string; email?: string } : null;
+  } catch {
+    return null;
+  }
 }
 
 // ─── constants ────────────────────────────────────────────────────────────────
@@ -27,13 +41,24 @@ const FILE_STYLES: Record<string, { bg: string; color: string; label: string; Ic
   image:        { bg: "#F3E8FF", color: "#7C3AED", label: "Image",              Icon: ImageIcon       },
 };
 
-const INITIAL_FILES: FileItem[] = [
-  { id: "1", name: "Project Requirements.pdf",  type: "pdf",          size: "2.4 MB",  lastModified: "2 hours ago",  owner: "John Doe"    },
-  { id: "2", name: "Meeting Notes.docx",         type: "document",     size: "156 KB",  lastModified: "1 day ago",    owner: "Sara Miller" },
-  { id: "3", name: "Budget Analysis.xlsx",       type: "spreadsheet",  size: "512 KB",  lastModified: "3 days ago",   owner: "Alex Brown"  },
-  { id: "4", name: "Design Presentation.pptx",  type: "presentation", size: "8.1 MB",  lastModified: "1 week ago",   owner: "John Doe"    },
-  { id: "5", name: "Wireframe_v2.png",           type: "image",        size: "1.2 MB",  lastModified: "2 days ago",   owner: "Sara Miller" },
-];
+function readFilesFromStorage(workspaceId: string): FileItem[] {
+  try {
+    const raw = localStorage.getItem(`collabhive.files.${workspaceId}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as FileItem[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeFilesToStorage(workspaceId: string, files: FileItem[]) {
+  try {
+    localStorage.setItem(`collabhive.files.${workspaceId}`, JSON.stringify(files));
+  } catch {
+    // ignore storage write failures
+  }
+}
 
 function guessType(name: string): FileItem["type"] {
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
@@ -45,26 +70,65 @@ function guessType(name: string): FileItem["type"] {
   return "document";
 }
 
+function getPreviewKind(file: FileItem): FilePreviewKind {
+  if (file.type === "image") return "image";
+  if (file.type === "pdf") return "pdf";
+  if (file.mimeType?.startsWith("text/") || file.name.toLowerCase().endsWith(".txt") || file.name.toLowerCase().endsWith(".csv")) {
+    return "text";
+  }
+  return "unsupported";
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function readFileAsText(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read file text"));
+    reader.readAsText(file);
+  });
+}
+
 // ─── File Detail View ─────────────────────────────────────────────────────────
 function FileDetailView({
   file,
   onClose,
   onDelete,
   onRename,
+  onOpen,
 }: {
   file: FileItem;
   onClose: () => void;
   onDelete: (id: string) => void;
   onRename: (id: string, name: string) => void;
+  onOpen: (file: FileItem) => void;
 }) {
   const { bg, color, label, Icon } = FILE_STYLES[file.type] ?? FILE_STYLES.document;
   const [toast, setToast] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [newName,  setNewName]  = useState(file.name);
+  const previewKind = getPreviewKind(file);
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 2000); };
 
+  const handleOpen = () => {
+    if (!file.dataUrl) {
+      showToast("No file content available.");
+      return;
+    }
+    onOpen(file);
+  };
+
   const actions = [
+    { icon: ChevronRight, label: "Open", color: "#2563EB", bg: "#EFF6FF", onTap: handleOpen },
     { icon: Download, label: "Download", color: "#2563EB", bg: "#EFF6FF", onTap: () => showToast("Download started…") },
     { icon: Share2,   label: "Share",    color: "#7C3AED", bg: "#F5F3FF", onTap: () => showToast("Link copied to clipboard!") },
     { icon: Pencil,   label: "Rename",   color: "#D97706", bg: "#FFFBEB", onTap: () => setRenaming(true) },
@@ -84,7 +148,7 @@ function FileDetailView({
         animate={{ y: 0 }}
         exit={{ y: "100%" }}
         transition={{ type: "spring", damping: 28, stiffness: 320 }}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}
         style={{ background: "white", borderRadius: "28px 28px 0 0", overflow: "hidden" }}
       >
         {/* Handle */}
@@ -136,6 +200,39 @@ function FileDetailView({
           <span style={{ fontSize: 12, fontWeight: 500, color, background: bg, borderRadius: 20, padding: "3px 12px" }}>{label}</span>
         </div>
 
+        {/* Preview */}
+        <div style={{ padding: "0 16px 16px" }}>
+          <div style={{ borderRadius: 16, border: "1px solid #F3F4F6", background: "#FAFAFA", overflow: "hidden", minHeight: 140 }}>
+            {previewKind === "image" && file.dataUrl && (
+              <img src={file.dataUrl} alt={file.name} style={{ display: "block", width: "100%", maxHeight: 220, objectFit: "contain", background: "#F9FAFB" }} />
+            )}
+            {previewKind === "pdf" && file.dataUrl && (
+              <object data={file.dataUrl} type={file.mimeType || "application/pdf"} style={{ width: "100%", height: 220, border: "none", background: "white" }}>
+                <div style={{ minHeight: 140, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 16, textAlign: "center", gap: 8 }}>
+                  <Icon size={28} color={color} />
+                  <p style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>PDF preview unavailable</p>
+                  <p style={{ fontSize: 12, color: "#9CA3AF" }}>This PDF cannot be rendered in the embedded viewer.</p>
+                </div>
+              </object>
+            )}
+            {previewKind === "text" && (
+              <div style={{ padding: 14 }}>
+                <p style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", marginBottom: 8 }}>Preview</p>
+                <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, lineHeight: 1.45, color: "#111827", fontFamily: "inherit", maxHeight: 200, overflowY: "auto" }}>
+                  {file.textContent || "This file is empty."}
+                </pre>
+              </div>
+            )}
+            {previewKind === "unsupported" && (
+              <div style={{ minHeight: 140, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 16, textAlign: "center", gap: 8 }}>
+                <Icon size={28} color={color} />
+                <p style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>Preview unavailable for this file type</p>
+                <p style={{ fontSize: 12, color: "#9CA3AF" }}>This file remains inside the app, but inline preview is not available for this format.</p>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Meta row */}
         <div style={{ display: "flex", justifyContent: "space-around", padding: "10px 16px 16px", borderTop: "1px solid #F9FAFB", borderBottom: "1px solid #F9FAFB", background: "#FAFAFA" }}>
           {[
@@ -152,7 +249,7 @@ function FileDetailView({
         </div>
 
         {/* Action buttons */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, padding: "16px 16px 28px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, padding: "16px 16px 28px" }}>
           {actions.map(({ icon: Ic, label: lb, color: c, bg: b, onTap }) => (
             <button
               key={lb}
@@ -182,13 +279,77 @@ function FileDetailView({
   );
 }
 
+function FileViewer({ file, onClose }: { file: FileItem; onClose: () => void }) {
+  const previewKind = getPreviewKind(file);
+  const { Icon } = FILE_STYLES[file.type] ?? FILE_STYLES.document;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+      style={{ position: "absolute", inset: 0, zIndex: 55, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(3px)", borderRadius: 52, overflow: "hidden", display: "flex", flexDirection: "column" }}
+    >
+      <motion.div
+        initial={{ y: 24, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: 24, opacity: 0 }}
+        transition={{ type: "spring", damping: 26, stiffness: 320 }}
+        onClick={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}
+        style={{ background: "white", margin: 14, marginTop: 22, borderRadius: 24, overflow: "hidden", display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", borderBottom: "1px solid #F3F4F6" }}>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ fontSize: 15, fontWeight: 700, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 240 }}>{file.name}</p>
+            <p style={{ fontSize: 11, color: "#9CA3AF" }}>{file.size}</p>
+          </div>
+          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: "50%", background: "#F3F4F6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <X size={15} color="#6B7280" />
+          </button>
+        </div>
+
+        <div style={{ flex: 1, minHeight: 0, background: "#FAFAFA" }}>
+          {previewKind === "image" && file.dataUrl && (
+            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}>
+              <img src={file.dataUrl} alt={file.name} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+            </div>
+          )}
+          {previewKind === "pdf" && file.dataUrl && (
+            <object data={file.dataUrl} type={file.mimeType || "application/pdf"} style={{ width: "100%", height: "100%", border: "none", background: "white" }}>
+              <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 24, textAlign: "center" }}>
+                <Icon size={32} color="#9CA3AF" />
+                <p style={{ fontSize: 14, fontWeight: 600, color: "#374151" }}>PDF preview unavailable</p>
+                <p style={{ fontSize: 12, color: "#9CA3AF" }}>This PDF cannot be rendered in the embedded viewer.</p>
+              </div>
+            </object>
+          )}
+          {previewKind === "text" && (
+            <div style={{ padding: 16, height: "100%", overflowY: "auto" }}>
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 13, lineHeight: 1.5, color: "#111827", fontFamily: "inherit" }}>{file.textContent || "This file is empty."}</pre>
+            </div>
+          )}
+          {previewKind === "unsupported" && (
+            <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 24, textAlign: "center" }}>
+              <Icon size={32} color="#9CA3AF" />
+              <p style={{ fontSize: 14, fontWeight: 600, color: "#374151" }}>This file type cannot be previewed inline</p>
+              <p style={{ fontSize: 12, color: "#9CA3AF" }}>The file stays inside the app, but preview is unavailable for this format.</p>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 export function FileManagement() {
   const navigate = useNavigate();
   const { id }   = useParams();
   const fileRef  = useRef<HTMLInputElement>(null);
+  const workspaceId = id ?? "default";
 
-  const [files,       setFiles]       = useState<FileItem[]>(INITIAL_FILES);
+  const [files,       setFiles]       = useState<FileItem[]>(() => readFilesFromStorage(workspaceId));
   const [query,       setQuery]       = useState("");
   const [cardMenuId,  setCardMenuId]  = useState<string | null>(null);
   const [editId,      setEditId]      = useState<string | null>(null);
@@ -197,6 +358,7 @@ export function FileManagement() {
 
   // File detail view
   const [detailFile,  setDetailFile]  = useState<FileItem | null>(null);
+  const [viewerFile,  setViewerFile]  = useState<FileItem | null>(null);
 
   // Header three-dot → select mode
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
@@ -211,13 +373,21 @@ export function FileManagement() {
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 2500); };
 
   const handleDelete = (fileId: string) => {
-    setFiles((prev) => prev.filter((f) => f.id !== fileId));
+    setFiles((prev) => {
+      const next = prev.filter((f) => f.id !== fileId);
+      writeFilesToStorage(workspaceId, next);
+      return next;
+    });
     setCardMenuId(null);
     showToast("File deleted.");
   };
 
   const handleDeleteSelected = () => {
-    setFiles((prev) => prev.filter((f) => !selected.has(f.id)));
+    setFiles((prev) => {
+      const next = prev.filter((f) => !selected.has(f.id));
+      writeFilesToStorage(workspaceId, next);
+      return next;
+    });
     setSelected(new Set());
     setSelectMode(false);
     showToast(`${selected.size} file${selected.size > 1 ? "s" : ""} deleted.`);
@@ -229,24 +399,46 @@ export function FileManagement() {
     const targetId   = id   ?? editId;
     const targetName = name ?? editName;
     if (!targetName?.trim()) return;
-    setFiles((prev) => prev.map((f) => f.id === targetId ? { ...f, name: targetName.trim() } : f));
+    setFiles((prev) => {
+      const next = prev.map((f) => f.id === targetId ? { ...f, name: targetName.trim() } : f);
+      writeFilesToStorage(workspaceId, next);
+      return next;
+    });
     setEditId(null);
     showToast("File renamed.");
   };
 
-  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = e.target.files;
     if (!picked) return;
-    Array.from(picked).forEach((file) => {
-      setFiles((prev) => [{
-        id: Date.now().toString() + Math.random(),
-        name: file.name,
-        type: guessType(file.name),
-        size: file.size > 1_000_000 ? `${(file.size / 1_000_000).toFixed(1)} MB` : `${Math.round(file.size / 1000)} KB`,
-        lastModified: "Just now",
-        owner: "You",
-      }, ...prev]);
-    });
+    for (const file of Array.from(picked)) {
+      try {
+        const [dataUrl, textContent] = await Promise.all([
+          readFileAsDataUrl(file),
+          file.type.startsWith("text/") || file.name.toLowerCase().endsWith(".txt") || file.name.toLowerCase().endsWith(".csv")
+            ? readFileAsText(file)
+            : Promise.resolve("")
+        ]);
+
+        setFiles((prev) => {
+          const next = [{
+            id: Date.now().toString() + Math.random(),
+            name: file.name,
+            type: guessType(file.name),
+            size: file.size > 1_000_000 ? `${(file.size / 1_000_000).toFixed(1)} MB` : `${Math.round(file.size / 1000)} KB`,
+            lastModified: "Just now",
+            owner: "You",
+            mimeType: file.type,
+            dataUrl,
+            textContent,
+          }, ...prev];
+          writeFilesToStorage(workspaceId, next);
+          return next;
+        });
+      } catch {
+        showToast(`Failed to upload ${file.name}.`);
+      }
+    }
     e.target.value = "";
     showToast("File uploaded successfully.");
   };
@@ -306,7 +498,7 @@ export function FileManagement() {
                     exit={{ opacity: 0, scale: 0.92, y: -4 }}
                     transition={{ duration: 0.12 }}
                     style={{ position: "absolute", top: 42, right: 0, zIndex: 30, background: "white", borderRadius: 14, boxShadow: "0 4px 24px rgba(0,0,0,0.14)", overflow: "hidden", minWidth: 160 }}
-                    onClick={(e) => e.stopPropagation()}
+                    onClick={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}
                   >
                     <button
                       onClick={() => { setSelectMode(true); setHeaderMenuOpen(false); }}
@@ -365,7 +557,7 @@ export function FileManagement() {
           {/* Upload card */}
           {!query && !selectMode && (
             <div
-              onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
+              onClick={(e: MouseEvent<HTMLDivElement>) => { e.stopPropagation(); fileRef.current?.click(); }}
               style={{ background: "white", borderRadius: 16, border: "2px dashed #93C5FD", aspectRatio: "1/1", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}
               className="hover:bg-blue-50 transition-colors"
             >
@@ -387,11 +579,15 @@ export function FileManagement() {
               <motion.div
                 key={file.id}
                 whileTap={{ scale: 0.97 }}
-                onClick={(e) => {
+                onClick={(e: MouseEvent<HTMLDivElement>) => {
                   e.stopPropagation();
                   if (selectMode) { toggleSelect(file.id); return; }
                   if (isEditing || isMenuOpen) return;
-                  setDetailFile(file);
+                  if (file.dataUrl || file.textContent) {
+                    setViewerFile(file);
+                  } else {
+                    setDetailFile(file);
+                  }
                 }}
                 style={{
                   background: "white", borderRadius: 16, aspectRatio: "1/1",
@@ -419,7 +615,7 @@ export function FileManagement() {
                 {/* Three-dot card menu (hidden in select mode) */}
                 {!selectMode && (
                   <button
-                    onClick={(e) => { e.stopPropagation(); setCardMenuId(isMenuOpen ? null : file.id); setEditId(null); }}
+                    onClick={(e: MouseEvent<HTMLButtonElement>) => { e.stopPropagation(); setCardMenuId(isMenuOpen ? null : file.id); setEditId(null); }}
                     style={{ position: "absolute", top: 8, right: 8, width: 26, height: 26, borderRadius: "50%", background: isMenuOpen ? "#F3F4F6" : "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
                   >
                     <MoreVertical size={14} color="#6B7280" />
@@ -434,7 +630,7 @@ export function FileManagement() {
                       animate={{ opacity: 1, scale: 1, y: 0 }}
                       exit={{ opacity: 0, scale: 0.92, y: -4 }}
                       transition={{ duration: 0.12 }}
-                      onClick={(e) => e.stopPropagation()}
+                      onClick={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}
                       style={{ position: "absolute", top: 34, right: 8, zIndex: 20, background: "white", borderRadius: 12, boxShadow: "0 4px 20px rgba(0,0,0,0.14)", overflow: "hidden", minWidth: 120 }}
                     >
                       <button onClick={() => startEdit(file)}
@@ -459,7 +655,7 @@ export function FileManagement() {
                 {/* Name / rename */}
                 <div>
                   {isEditing ? (
-                    <div style={{ display: "flex", gap: 4, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
+                    <div style={{ display: "flex", gap: 4, alignItems: "center" }} onClick={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}>
                       <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)}
                         onKeyPress={(e) => e.key === "Enter" && confirmEdit()}
                         style={{ flex: 1, fontSize: 12, border: "1.5px solid #2563EB", borderRadius: 6, padding: "3px 6px", outline: "none" }} />
@@ -545,8 +741,14 @@ export function FileManagement() {
             onClose={() => setDetailFile(null)}
             onDelete={(fid) => { handleDelete(fid); setDetailFile(null); }}
             onRename={(fid, name) => confirmEdit(fid, name)}
+            onOpen={(file) => { setDetailFile(null); setViewerFile(file); }}
           />
         )}
+      </AnimatePresence>
+
+      {/* File content viewer */}
+      <AnimatePresence>
+        {viewerFile && <FileViewer file={viewerFile} onClose={() => setViewerFile(null)} />}
       </AnimatePresence>
     </PhoneFrame>
   );

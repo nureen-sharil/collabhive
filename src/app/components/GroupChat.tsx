@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, type MouseEvent } from "react";
 import { useNavigate, useParams } from "../router";
 import {
   ArrowLeft, Users, Search, Smile, Paperclip, Mic,
@@ -6,37 +6,45 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "../motion-compat";
 import { PhoneFrame } from "./PhoneFrame";
+import { useTasks } from "../context/TaskContext";
+import { useWorkspaces } from "../context/WorkspaceContext";
+import { buildApiUrl } from "../../lib/api";
 
 // ─── types ────────────────────────────────────────────────────────────────────
 interface Attachment { type: "image" | "file"; name: string; url?: string }
 
+interface MessagePayload {
+  messageText?: string;
+  attachment?: Attachment;
+  voice?: { duration: string };
+}
+
+interface MessageResponse {
+  messageId: number;
+  senderId: number;
+  receiverId: number | null;
+  senderName: string;
+  messageText: string;
+  attachmentType?: "image" | "file" | null;
+  attachmentName?: string | null;
+  attachmentUrl?: string | null;
+  voiceDuration?: string | null;
+  timestamp: string;
+}
+
 interface Message {
-  id: string;
-  sender: string;
-  text: string;
-  time: string;
-  isOwn: boolean;
-  read: boolean;
+  messageId: number;
+  senderId: number;
+  receiverId: number | null;
+  senderName: string;
+  messageText: string;
+  timestamp: string;
   attachment?: Attachment;
   voice?: { duration: string };
 }
 
 // ─── constants ────────────────────────────────────────────────────────────────
-const AVATAR_COLORS: Record<string, string> = {
-  Natasha: "#7C3AED", Fiona: "#DB2777", Marcus: "#EA580C",
-  Leila: "#0891B2",   You: "#2563EB",
-};
-
-const MEMBERS = [
-  { name: "Natasha", role: "Project Lead",  color: "#7C3AED", online: true  },
-  { name: "Fiona",   role: "UI Designer",   color: "#DB2777", online: true  },
-  { name: "Marcus",  role: "Backend Dev",   color: "#EA580C", online: false },
-  { name: "Leila",   role: "QA Engineer",   color: "#0891B2", online: true  },
-  { name: "You",     role: "Frontend Dev",  color: "#2563EB", online: true  },
-  { name: "Ahmed",   role: "Scrum Master",  color: "#16A34A", online: false },
-  { name: "Sara",    role: "Data Analyst",  color: "#D97706", online: false },
-  { name: "Tom",     role: "DevOps",        color: "#6B7280", online: false },
-];
+const AVATAR_COLORS: Record<string, string> = {};
 
 const EMOJI_CATEGORIES = [
   { label: "Smileys", emojis: ["😀","😂","😍","🥰","😎","🤩","😢","😡","🥺","😴","🤔","😇","🙃","😏","🤗","😬","😱","🤯","🥳","😤"] },
@@ -45,37 +53,82 @@ const EMOJI_CATEGORIES = [
   { label: "Nature",   emojis: ["🌟","🌈","☀️","🌙","⚡","🌊","🍀","🌸","🌺","🦋","🐱","🐶","🦊","🐧","🦁","🌍","🌴","🍁","❄️","🌻"] },
 ];
 
-const INITIAL_MESSAGES: Message[] = [
-  { id: "1", sender: "Natasha", text: "Hey team! Has everyone reviewed the latest design mockups?",            time: "9:30 AM", isOwn: false, read: true  },
-  { id: "2", sender: "You",     text: "Yes, I reviewed them. Looking great! Just a few minor adjustments needed.", time: "9:35 AM", isOwn: true,  read: true  },
-  { id: "3", sender: "Fiona",   text: "I agree. The color scheme works well. Should we schedule a call?",     time: "9:40 AM", isOwn: false, read: true  },
-  { id: "4", sender: "You",     text: "Sure! How about tomorrow at 2 PM?",                                    time: "9:42 AM", isOwn: true,  read: true  },
-  { id: "5", sender: "Natasha", text: "Works for me! I'll send out a calendar invite.",                       time: "9:45 AM", isOwn: false, read: true  },
-  { id: "6", sender: "Fiona",   text: "Perfect! See you all then 👍",                                         time: "9:46 AM", isOwn: false, read: false },
-];
-
 // ─── helpers ──────────────────────────────────────────────────────────────────
-function nowTime() {
-  return new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+function formatMessageTime(timestamp: string) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function normalizeMessage(message: MessageResponse): Message {
+  return {
+    messageId: message.messageId,
+    senderId: message.senderId,
+    receiverId: message.receiverId,
+    senderName: message.senderName,
+    messageText: message.messageText,
+    timestamp: message.timestamp,
+    attachment: message.attachmentType && message.attachmentName
+      ? {
+          type: message.attachmentType,
+          name: message.attachmentName,
+          url: message.attachmentUrl ?? undefined,
+        }
+      : undefined,
+    voice: message.voiceDuration ? { duration: message.voiceDuration } : undefined,
+  };
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read attachment"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function readStoredCurrentUser() {
+  const keys = ["currentUser", "collabhive.auth.currentUser"];
+  for (const key of keys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as { id?: number; name?: string; email?: string };
+      if (parsed && typeof parsed === "object") {
+        return parsed;
+      }
+    } catch {
+      // ignore malformed storage entry
+    }
+  }
+  return null;
+}
+
+function writeStoredCurrentUser(user: { id?: number; name?: string; email?: string } | null) {
+  if (!user) return;
+  const serialized = JSON.stringify(user);
+  localStorage.setItem("currentUser", serialized);
+  localStorage.setItem("collabhive.auth.currentUser", serialized);
 }
 
 // ─── Members Panel ────────────────────────────────────────────────────────────
-function MembersPanel({ onClose }: { onClose: () => void }) {
-  const online  = MEMBERS.filter((m) => m.online);
-  const offline = MEMBERS.filter((m) => !m.online);
+function MembersPanel({ onClose, members }: { onClose: () => void; members: { name: string; role: string; color: string; online: boolean }[] }) {
+  const online  = members.filter((m) => m.online);
+  const offline = members.filter((m) => !m.online);
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       onClick={onClose}
       style={{ position:"absolute",inset:0,background:"rgba(0,0,0,0.45)",backdropFilter:"blur(2px)",zIndex:50,borderRadius:52,overflow:"hidden",display:"flex",flexDirection:"column",justifyContent:"flex-end" }}>
       <motion.div initial={{ y:80,opacity:0 }} animate={{ y:0,opacity:1 }} exit={{ y:80,opacity:0 }}
         transition={{ type:"spring",damping:26,stiffness:320 }}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}
         style={{ background:"white",borderRadius:"20px 20px 0 0",overflow:"hidden",maxHeight:"70%" }}>
         <div style={{ display:"flex",justifyContent:"center",padding:"10px 0 0" }}>
           <div style={{ width:40,height:4,borderRadius:2,background:"#E5E7EB" }} />
         </div>
         <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px 12px" }}>
-          <p style={{ fontSize:15,fontWeight:700,color:"#111827" }}>Group Members ({MEMBERS.length})</p>
+          <p style={{ fontSize:15,fontWeight:700,color:"#111827" }}>Group Members ({members.length})</p>
           <button onClick={onClose} style={{ width:28,height:28,borderRadius:"50%",background:"#F3F4F6",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>
             <X size={14} color="#6B7280" />
           </button>
@@ -204,8 +257,8 @@ function VoiceRecorder({ onSend, onCancel }: { onSend: (duration: string) => voi
 }
 
 // ─── Message Bubble ───────────────────────────────────────────────────────────
-function Bubble({ msg, searchQuery }: { msg: Message; searchQuery: string }) {
-  const own = msg.isOwn;
+function Bubble({ msg, searchQuery, currentUserId }: { msg: Message; searchQuery: string; currentUserId: number | null }) {
+  const own = currentUserId !== null && msg.senderId === currentUserId;
 
   const highlight = (text: string) => {
     if (!searchQuery.trim()) return <>{text}</>;
@@ -218,12 +271,12 @@ function Bubble({ msg, searchQuery }: { msg: Message; searchQuery: string }) {
   return (
     <div style={{ display:"flex",flexDirection:own?"row-reverse":"row",gap:10,alignItems:"flex-end" }}>
       {!own && (
-        <div style={{ width:32,height:32,borderRadius:"50%",background:AVATAR_COLORS[msg.sender]??"#6B7280",color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,flexShrink:0 }}>
-          {msg.sender.charAt(0)}
+        <div style={{ width:32,height:32,borderRadius:"50%",background:AVATAR_COLORS[msg.senderName]??"#6B7280",color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,flexShrink:0 }}>
+          {msg.senderName.charAt(0)}
         </div>
       )}
       <div style={{ display:"flex",flexDirection:"column",alignItems:own?"flex-end":"flex-start",maxWidth:"75%" }}>
-        {!own && <span style={{ fontSize:11,color:"#6B7280",marginBottom:4,paddingLeft:4 }}>{msg.sender}</span>}
+        {!own && <span style={{ fontSize:11,color:"#6B7280",marginBottom:4,paddingLeft:4 }}>{msg.senderName}</span>}
 
         {/* Voice message */}
         {msg.voice && (
@@ -262,15 +315,14 @@ function Bubble({ msg, searchQuery }: { msg: Message; searchQuery: string }) {
         )}
 
         {/* Text */}
-        {msg.text && (
+        {msg.messageText && (
           <div style={{ borderRadius:own?"18px 18px 4px 18px":"18px 18px 18px 4px",padding:"10px 14px",background:own?"#2563EB":"white",color:own?"white":"#111827",boxShadow:own?"none":"0 1px 3px rgba(0,0,0,0.08)" }}>
-            <p style={{ fontSize:13,lineHeight:1.45 }}>{highlight(msg.text)}</p>
+            <p style={{ fontSize:13,lineHeight:1.45 }}>{highlight(msg.messageText)}</p>
           </div>
         )}
 
         <div style={{ display:"flex",alignItems:"center",gap:4,marginTop:4,paddingLeft:4,paddingRight:4 }}>
-          <span style={{ fontSize:10,color:"#9CA3AF" }}>{msg.time}</span>
-          {own && <div style={{ width:12,height:12,borderRadius:"50%",background:msg.read?"#2563EB":"transparent",border:`2px solid ${msg.read?"#2563EB":"#9CA3AF"}` }} />}
+          <span style={{ fontSize:10,color:"#9CA3AF" }}>{formatMessageTime(msg.timestamp)}</span>
         </div>
       </div>
     </div>
@@ -282,8 +334,51 @@ export function GroupChat() {
   const navigate = useNavigate();
   const { id }   = useParams();
   const fileRef  = useRef<HTMLInputElement>(null);
+  const workspaceId = id ?? "default";
+  const { tasks } = useTasks();
+  const { getWorkspace } = useWorkspaces();
 
-  const [messages,     setMessages]     = useState<Message[]>(INITIAL_MESSAGES);
+  const workspace = getWorkspace(workspaceId);
+  const [currentUser, setCurrentUser] = useState<{ id?: number; name?: string; email?: string } | null>(() => {
+    return readStoredCurrentUser();
+  });
+  const currentUserId = typeof currentUser?.id === "number" ? currentUser.id : null;
+
+  const members = useMemo(() => {
+    const palette = ["#2563EB", "#7C3AED", "#DB2777", "#16A34A", "#EA580C", "#0891B2", "#D97706", "#DC2626"];
+    const map = new Map<string, { name: string; role: string; color: string; online: boolean }>();
+
+    const user = readStoredCurrentUser();
+    if (user?.name) {
+      map.set(user.name, {
+        name: user.name,
+        role: "Member",
+        color: palette[0],
+        online: true,
+      });
+    }
+
+    tasks
+      .filter((t) => t.workspaceId === workspaceId)
+      .forEach((t, index) => {
+        const name = t.assigneeName || t.assignee || "Member";
+        if (map.has(name)) return;
+        map.set(name, {
+          name,
+          role: "Collaborator",
+          color: t.assigneeColor || palette[index % palette.length],
+          online: index < 3,
+        });
+      });
+
+    if (map.size === 0) {
+      map.set("Member", { name: "Member", role: "Collaborator", color: palette[0], online: true });
+    }
+
+    return Array.from(map.values());
+  }, [tasks, workspaceId]);
+
+  const [messages,     setMessages]     = useState<Message[]>([]);
   const [messageInput, setMessageInput] = useState("");
   const [showMembers,  setShowMembers]  = useState(false);
   const [searchOpen,   setSearchOpen]   = useState(false);
@@ -291,21 +386,158 @@ export function GroupChat() {
   const [showEmoji,    setShowEmoji]    = useState(false);
   const [recording,    setRecording]    = useState(false);
 
+  useEffect(() => {
+    const syncCurrentUser = () => {
+      setCurrentUser(readStoredCurrentUser());
+    };
+
+    syncCurrentUser();
+    window.addEventListener("storage", syncCurrentUser);
+    return () => window.removeEventListener("storage", syncCurrentUser);
+  }, []);
+
+  useEffect(() => {
+    if (currentUserId !== null || !currentUser?.email) return;
+
+    let cancelled = false;
+
+    const hydrateCurrentUserId = async () => {
+      try {
+        const response = await fetch(buildApiUrl(`/api/users/by-email/${encodeURIComponent(currentUser.email ?? "")}`), {
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to resolve current user: ${response.status}`);
+        }
+
+        const data = await response.json() as { id: number; name: string; email: string };
+        if (cancelled) return;
+
+        const nextUser = { ...currentUser, id: data.id, name: data.name, email: data.email };
+        setCurrentUser(nextUser);
+        writeStoredCurrentUser(nextUser);
+      } catch (error) {
+        console.error(error);
+      }
+    };
+
+    hydrateCurrentUserId();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser, currentUserId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadMessages = async () => {
+      try {
+        const response = await fetch(buildApiUrl(`/api/workspaces/${workspaceId}/messages`), {
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to fetch messages: ${response.status}`);
+        }
+
+        const data = await response.json() as MessageResponse[];
+        if (!cancelled) {
+          setMessages(Array.isArray(data) ? data.map(normalizeMessage) : []);
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    };
+
+    loadMessages();
+    const intervalId = window.setInterval(loadMessages, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [workspaceId]);
+
   const filteredMessages = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return q ? messages.filter((m) => m.text.toLowerCase().includes(q)) : messages;
+    return q ? messages.filter((m) => m.messageText.toLowerCase().includes(q)) : messages;
   }, [messages, searchQuery]);
 
-  const pushMessage = (patch: Partial<Message>) => {
-    setMessages((prev) => [...prev, {
-      id: Date.now().toString(), sender: "You", text: "",
-      time: nowTime(), isOwn: true, read: false, ...patch,
-    }]);
+  const appendLocalMessage = (message: Message) => {
+    setMessages((prev) => {
+      if (prev.some((entry) => entry.messageId === message.messageId)) return prev;
+      return [...prev, message];
+    });
   };
 
-  const handleSend = () => {
+  const resolveCurrentUserId = async () => {
+    if (typeof currentUser?.id === "number") {
+      return currentUser.id;
+    }
+
+    if (!currentUser?.email) {
+      return null;
+    }
+
+    const response = await fetch(buildApiUrl(`/api/users/by-email/${encodeURIComponent(currentUser.email)}`), {
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to resolve current user: ${response.status}`);
+    }
+
+    const data = await response.json() as { id: number; name: string; email: string };
+    const nextUser = { ...currentUser, id: data.id, name: data.name, email: data.email };
+    setCurrentUser(nextUser);
+    writeStoredCurrentUser(nextUser);
+    return data.id;
+  };
+
+  const sendMessage = async (payload: MessagePayload) => {
+    const senderId = await resolveCurrentUserId();
+    if (senderId === null) {
+      console.error("Current user id is missing; log in again to send messages.");
+      return null;
+    }
+
+    const response = await fetch(buildApiUrl(`/api/workspaces/${workspaceId}/messages`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        senderId,
+        receiverId: null,
+        messageText: payload.messageText ?? "",
+        attachmentType: payload.attachment?.type ?? null,
+        attachmentName: payload.attachment?.name ?? null,
+        attachmentUrl: payload.attachment?.url ?? null,
+        voiceDuration: payload.voice?.duration ?? null,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to send message: ${response.status}`);
+    }
+
+    const created = await response.json() as MessageResponse;
+    const normalized = normalizeMessage(created);
+    appendLocalMessage(normalized);
+    return normalized;
+  };
+
+  const handleSend = async () => {
     if (!messageInput.trim()) return;
-    pushMessage({ text: messageInput.trim() });
+
+    try {
+      await sendMessage({ messageText: messageInput.trim() });
+    } catch (error) {
+      console.error(error);
+      return;
+    }
+
     setMessageInput("");
     setShowEmoji(false);
   };
@@ -317,19 +549,27 @@ export function GroupChat() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-    Array.from(files).forEach((file) => {
-      const isImage = file.type.startsWith("image/");
-      const url = isImage ? URL.createObjectURL(file) : undefined;
-      pushMessage({
-        attachment: { type: isImage ? "image" : "file", name: file.name, url },
-      });
+    Array.from(files).forEach(async (file) => {
+      try {
+        const isImage = file.type.startsWith("image/");
+        const url = await readFileAsDataUrl(file);
+        await sendMessage({
+          attachment: { type: isImage ? "image" : "file", name: file.name, url },
+        });
+      } catch (error) {
+        console.error(error);
+      }
     });
     e.target.value = "";
   };
 
-  const handleVoiceSend = (duration: string) => {
+  const handleVoiceSend = async (duration: string) => {
     setRecording(false);
-    pushMessage({ voice: { duration } });
+    try {
+      await sendMessage({ voice: { duration } });
+    } catch (error) {
+      console.error(error);
+    }
   };
 
   return (
@@ -360,7 +600,7 @@ export function GroupChat() {
               <div>
                 <p style={{ fontSize:16,fontWeight:600,color:"#111827",lineHeight:1.2 }}>Group Chat</p>
                 <p style={{ fontSize:11,color:"#22C55E",fontWeight:500 }}>
-                  {MEMBERS.filter((m) => m.online).length} members online
+                  {members.filter((m) => m.online).length} members online
                 </p>
               </div>
             </div>
@@ -381,7 +621,9 @@ export function GroupChat() {
         style={{ background:"#EFF6FF",borderBottom:"1px solid #DBEAFE" }}>
         <Pin size={13} color="#2563EB" style={{ flexShrink:0 }} />
         <p style={{ fontSize:12,color:"#1E40AF",flex:1 }}>
-          Project deadline: June 20, 2026. All deliverables must be submitted by EOD.
+          {workspace?.deadline && workspace.deadline !== "TBD"
+            ? `Project deadline: ${workspace.deadline}.`
+            : "No deadline has been set for this workspace yet."}
         </p>
       </div>
 
@@ -405,7 +647,7 @@ export function GroupChat() {
           </div>
         ) : (
           filteredMessages.map((msg) => (
-            <Bubble key={msg.id} msg={msg} searchQuery={searchQuery} />
+                <Bubble key={msg.messageId} msg={msg} searchQuery={searchQuery} currentUserId={currentUserId} />
           ))
         )}
       </div>
@@ -476,7 +718,7 @@ export function GroupChat() {
 
       {/* Members panel */}
       <AnimatePresence>
-        {showMembers && <MembersPanel onClose={() => setShowMembers(false)} />}
+        {showMembers && <MembersPanel onClose={() => setShowMembers(false)} members={members} />}
       </AnimatePresence>
     </PhoneFrame>
   );

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 
 export interface Workspace {
   id: string;
@@ -16,26 +16,28 @@ export interface Workspace {
 type Listener = () => void;
 const _listeners = new Set<Listener>();
 
-let _workspaces: Workspace[] = [
-  {
-    id: "1", title: "Software Methodology Project",
-    description: "Agile software development methodology study",
-    progress: 65, status: "In Progress", color: "#2563EB",
-    members: ["JD", "SM", "AB"], deadline: "June 20, 2026", createdAt: "2026-05-01",
-  },
-  {
-    id: "2", title: "Software Testing Project",
-    description: "Comprehensive testing and QA processes",
-    progress: 30, status: "In Progress", color: "#7C3AED",
-    members: ["JD", "AB"], deadline: "June 28, 2026", createdAt: "2026-05-10",
-  },
-  {
-    id: "3", title: "UI/UX Case Study",
-    description: "Design research and user experience case study",
-    progress: 0, status: "Not Started", color: "#DB2777",
-    members: ["SM"], deadline: "July 5, 2026", createdAt: "2026-06-01",
-  },
-];
+const STORAGE_KEY = "collabhive.workspaces";
+
+function readWorkspacesFromStorage(): Workspace[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as Workspace[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeWorkspacesToStorage(workspaces: Workspace[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(workspaces));
+  } catch {
+    // ignore storage write failures
+  }
+}
+
+let _workspaces: Workspace[] = readWorkspacesFromStorage();
 
 function _notify() { _listeners.forEach((l) => l()); }
 
@@ -49,11 +51,13 @@ export const workspaceStore = {
       ..._workspaces,
       { ...data, id, progress: 0, status: "Not Started", createdAt: new Date().toISOString().split("T")[0] },
     ];
+    writeWorkspacesToStorage(_workspaces);
     _notify();
     return id;
   },
   remove: (id: string) => {
     _workspaces = _workspaces.filter((w) => w.id !== id);
+    writeWorkspacesToStorage(_workspaces);
     _notify();
   },
 };
@@ -63,6 +67,7 @@ export function useWorkspaces() {
   const [, rerender] = useState(0);
 
   useEffect(() => {
+    _workspaces = readWorkspacesFromStorage();
     const listener: Listener = () => rerender((n) => n + 1);
     _listeners.add(listener);
     return () => { _listeners.delete(listener); };
@@ -74,4 +79,8 @@ export function useWorkspaces() {
     getWorkspace:    workspaceStore.get,
     removeWorkspace: workspaceStore.remove,
   };
+}
+
+export function WorkspaceProvider({ children }: { children: ReactNode }) {
+  return <>{children}</>;
 }

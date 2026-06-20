@@ -20,26 +20,31 @@ export function EditProfile() {
         const parsed = JSON.parse(userStr);
         if (parsed && typeof parsed === "object") {
           return {
-            name: parsed.name || "Seroja Jane",
-            email: parsed.email || "seroja.jane@collabhive.io"
+            name: parsed.name || "",
+            email: parsed.email || "",
+            role: parsed.role || "",
+            phone: parsed.phone || "",
+            location: parsed.location || "",
+            bio: parsed.bio || "",
+            avatarColor: parsed.avatarColor || "#2563EB",
           };
         }
       }
     } catch (error) {
       console.error("Failed to parse initial user details:", error);
     }
-    return { name: "Seroja Jane", email: "seroja.jane@collabhive.io" };
+    return { name: "", email: "", role: "", phone: "", location: "", bio: "", avatarColor: "#2563EB" };
   };
 
   const initialUser = getInitialUser();
 
   const [name,     setName]     = useState(initialUser.name);
   const [email,    setEmail]    = useState(initialUser.email);
-  const [role,     setRole]     = useState("Frontend Developer");
-  const [phone,    setPhone]    = useState("+1 234 567 8900");
-  const [location, setLocation] = useState("Kuala Lumpur, Malaysia");
-  const [bio,      setBio]      = useState("Passionate about building great user experiences with clean and scalable code.");
-  const [avatarColor, setAvatarColor] = useState("#2563EB");
+  const [role,     setRole]     = useState(initialUser.role);
+  const [phone,    setPhone]    = useState(initialUser.phone);
+  const [location, setLocation] = useState(initialUser.location);
+  const [bio,      setBio]      = useState(initialUser.bio);
+  const [avatarColor, setAvatarColor] = useState(initialUser.avatarColor);
   const [saved,    setSaved]    = useState(false);
 
   const initials = String(name).trim().split(" ").map((w) => w[0]?.toUpperCase() ?? "").slice(0, 2).join("");
@@ -48,7 +53,7 @@ export function EditProfile() {
     // Save updated user profile back to localStorage
     const userStr = localStorage.getItem("currentUser");
     const user = userStr ? JSON.parse(userStr) : {};
-    localStorage.setItem("currentUser", JSON.stringify({ ...user, name, email }));
+    localStorage.setItem("currentUser", JSON.stringify({ ...user, name, email, role, phone, location, bio, avatarColor }));
     navigate("/");
   };
 

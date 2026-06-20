@@ -20,7 +20,7 @@ export function Settings() {
   const navigate = useNavigate();
 
   // State to hold the current user details for the settings banner
-  const [currentUser, setCurrentUser] = useState({ name: "Seroja Jane", email: "seroja.jane@collabhive.io" });
+  const [currentUser, setCurrentUser] = useState({ name: "User", email: "" });
 
   useEffect(() => {
     // Retrieve the authenticated user from localStorage when component mounts
@@ -30,8 +30,8 @@ export function Settings() {
         const parsed = JSON.parse(userStr);
         if (parsed && typeof parsed === "object") {
           setCurrentUser({
-            name: parsed.name || "Seroja Jane",
-            email: parsed.email || "seroja.jane@collabhive.io"
+            name: parsed.name || "User",
+            email: parsed.email || ""
           });
         }
       }

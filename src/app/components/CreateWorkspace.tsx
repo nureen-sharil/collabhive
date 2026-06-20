@@ -81,6 +81,15 @@ const COLORS = [
   "#EA580C", "#D97706", "#16A34A", "#0891B2",
 ];
 
+function getStoredCurrentUser() {
+  try {
+    const raw = localStorage.getItem("currentUser") ?? localStorage.getItem("collabhive.auth.currentUser");
+    return raw ? JSON.parse(raw) as { email?: string } : null;
+  } catch {
+    return null;
+  }
+}
+
 export function CreateWorkspace() {
   const navigate = useNavigate();
   const { addWorkspace } = useWorkspaces();
@@ -112,12 +121,17 @@ export function CreateWorkspace() {
 
   const handleCreate = () => {
     if (!isValid) return;
+    const currentUser = getStoredCurrentUser();
+    const normalizedMembers = Array.from(new Set([
+      ...members,
+      ...(currentUser?.email ? [currentUser.email.trim()] : []),
+    ].filter(Boolean)));
     toastStore.show("Workspace created successfully!");
     addWorkspace({
       title:       title.trim(),
       description: description.trim(),
       color:       selectedColor,
-      members,
+      members:     normalizedMembers,
       deadline:    dateSet ? fmtDate(month, day, year) : "TBD",
     });
     navigate("/");
@@ -201,7 +215,7 @@ export function CreateWorkspace() {
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Software Methodology Project"
+              placeholder="Enter workspace name"
               style={inputBase}
             />
           </div>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import { useNavigate, useParams } from "../router";
 import { ArrowLeft, Bell, CheckCircle, Clock, Users, Calendar, X, AlertCircle, Info, ClipboardList } from "lucide-react";
 import { motion, AnimatePresence } from "../motion-compat";
@@ -60,7 +60,7 @@ function WorkspaceNotificationPanel({
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: -80, opacity: 0 }}
         transition={{ type: "spring", damping: 26, stiffness: 320 }}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}
         style={{
           background: "white",
           borderRadius: 20,
@@ -162,7 +162,7 @@ export function WorkspaceOverview() {
 
   const workspace = getWorkspace(id ?? "") ?? {
     id: id ?? "",
-    title: "Workspace",
+    title: "",
     description: "",
     progress: 0,
     status: "Not Started" as const,
@@ -172,40 +172,47 @@ export function WorkspaceOverview() {
     createdAt: "",
   };
 
-  // Workspace-specific notifications derived from the workspace data
-  const notifications: WorkspaceNotification[] = [
-    {
-      id: 1, type: "warning",
-      title: "Upcoming Deadline",
-      message: `"${workspace.title}" is due ${workspace.deadline}. Stay on track!`,
-      time: "Just now",
-    },
-    {
-      id: 2, type: "info",
-      title: "Meeting in 30 Minutes",
-      message: "Sprint Planning & Retrospective starts soon. Be ready.",
-      time: "30 min ago",
-    },
-    {
-      id: 3, type: "alert",
-      title: "3 Tasks Overdue",
-      message: "Complete database schema, API docs review, and timeline update.",
-      time: "1 hour ago",
-    },
-    {
-      id: 4, type: "success",
-      title: "New Member Joined",
-      message: `A new collaborator joined "${workspace.title}".`,
-      time: "2 hours ago",
-    },
-  ];
-
   const { tasks } = useTasks();
 
-  // Filter tasks belonging to this workspace (or default workspace "1")
-  const wsTasks    = tasks.filter((t) => t.workspaceId === id || t.workspaceId === "1");
+  const wsTasks    = tasks.filter((t) => t.workspaceId === id);
   const doneTasks  = wsTasks.filter((t) => t.status === "done");
   const pendingTasks = wsTasks.filter((t) => t.status !== "done"); // todo + inprogress
+
+  const daysLeft = (() => {
+    if (!workspace.deadline || workspace.deadline === "TBD") return "-";
+    const target = new Date(workspace.deadline);
+    if (Number.isNaN(target.getTime())) return "-";
+    const diff = Math.ceil((target.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+    return Math.max(diff, 0);
+  })();
+
+  const notifications: WorkspaceNotification[] = [
+    ...(workspace.deadline && workspace.deadline !== "TBD"
+      ? [{
+          id: 1,
+          type: "warning" as const,
+          title: "Upcoming Deadline",
+          message: `${workspace.title || "Workspace"} is due ${workspace.deadline}.`,
+          time: "Recent",
+        }]
+      : []),
+    ...pendingTasks.slice(0, 2).map((task, index) => ({
+      id: 100 + index,
+      type: task.priority === "High" ? ("alert" as const) : ("info" as const),
+      title: task.priority === "High" ? "High Priority Task" : "Task Update",
+      message: task.title,
+      time: "Recent",
+    })),
+    ...(doneTasks.length > 0
+      ? [{
+          id: 200,
+          type: "success" as const,
+          title: "Task Completed",
+          message: `${doneTasks.length} task${doneTasks.length > 1 ? "s" : ""} completed.`,
+          time: "Recent",
+        }]
+      : []),
+  ];
 
   const PRIORITY_DOT: Record<string, string> = {
     High:   "#EF4444",
@@ -217,7 +224,7 @@ export function WorkspaceOverview() {
     { label: "Tasks Done",    value: doneTasks.length,    icon: CheckCircle, color: "text-green-600 bg-green-50"  },
     { label: "Pending Tasks", value: pendingTasks.length, icon: Clock,       color: "text-orange-600 bg-orange-50"},
     { label: "Members",       value: Math.max(workspace.members.length, 1), icon: Users, color: "text-blue-600 bg-blue-50" },
-    { label: "Days Left",     value: 7, icon: Calendar,  color: "text-purple-600 bg-purple-50" },
+    { label: "Days Left",     value: daysLeft, icon: Calendar,  color: "text-purple-600 bg-purple-50" },
   ];
 
   const navItems = [
@@ -311,7 +318,7 @@ export function WorkspaceOverview() {
               <p style={{ fontSize: 15, fontWeight: 600, color: "#111827", marginBottom: 6 }}>{workspace.deadline}</p>
               <div style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#FEF3C7", borderRadius: 20, padding: "3px 10px" }}>
                 <Clock size={12} color="#D97706" />
-                <span style={{ fontSize: 12, fontWeight: 500, color: "#D97706" }}>7 days remaining</span>
+                <span style={{ fontSize: 12, fontWeight: 500, color: "#D97706" }}>{daysLeft === "-" ? "No deadline set" : `${daysLeft} day${Number(daysLeft) === 1 ? "" : "s"} remaining`}</span>
               </div>
             </div>
           </div>

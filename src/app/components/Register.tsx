@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "../router";
 import { Mail, Lock, Eye, EyeOff, User, AlertCircle, CheckCircle } from "lucide-react";
 import { PhoneFrame } from "./PhoneFrame";
+import { buildApiUrl } from "../../lib/api";
 
 function isValidEmail(v: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
@@ -74,7 +75,7 @@ export function Register() {
 
     try {
       // Send user data to your actual backend API to save it in the database
-      const response = await fetch("http://localhost:8000/api/register", {
+      const response = await fetch(buildApiUrl("/api/register"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: name.trim(), email: email.trim(), password }),
@@ -160,7 +161,7 @@ export function Register() {
               <User size={16} color={nameErr ? "#EF4444" : "#9CA3AF"} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
               <input type="text" value={name} onChange={(e) => setName(e.target.value)}
                 onBlur={() => setTouch((t) => ({ ...t, name: true }))}
-                placeholder="Seroja Jane"
+                placeholder="Your full name"
                 style={{ ...inputBox(!!nameErr), paddingLeft: 38 }} />
             </div>
             <FieldError msg={nameErr} />

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "../router";
 import { Mail, Lock, Eye, EyeOff, AlertCircle, CheckCircle } from "lucide-react";
 import { PhoneFrame } from "./PhoneFrame";
+import { buildApiUrl } from "../../lib/api";
 
 type FieldState = "idle" | "error" | "success";
 type FormState  = "idle" | "loading" | "success" | "error";
@@ -50,7 +51,7 @@ export function Login() {
 
     try {
       // Authenticate with your backend API
-      const response = await fetch("http://localhost:8000/api/login", {
+      const response = await fetch(buildApiUrl("/api/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim(), password }),
@@ -65,7 +66,7 @@ export function Login() {
       const data = await response.json();
 
       // Save the user data returned from the database to persist the session
-      localStorage.setItem("currentUser", JSON.stringify({ name: data.name, email: data.email }));
+      localStorage.setItem("currentUser", JSON.stringify({ id: data.id, name: data.name, email: data.email }));
 
       setFormState("success");
       // Redirects to the Dashboard screen

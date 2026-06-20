@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "../router";
 import { ArrowLeft, Flag, Tag, Users, AlignLeft, ChevronDown, Calendar } from "lucide-react";
 import { motion } from "../motion-compat";
@@ -13,12 +13,6 @@ const STATUSES: { value: TaskStatus; label: string; dot: string }[] = [
   { value: "todo",       label: "To Do",       dot: "#9CA3AF" },
   { value: "inprogress", label: "In Progress",  dot: "#F97316" },
   { value: "done",       label: "Done",         dot: "#22C55E" },
-];
-const ASSIGNEES = [
-  { initials: "JD", name: "John Doe",    color: "#2563EB" },
-  { initials: "SM", name: "Sara Miller", color: "#7C3AED" },
-  { initials: "AB", name: "Alex Brown",  color: "#DB2777" },
-  { initials: "NK", name: "Natasha K.",  color: "#16A34A" },
 ];
 const PRIORITY_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
   Low:    { bg: "#DBEAFE", text: "#1D4ED8", dot: "#3B82F6" },
@@ -93,7 +87,49 @@ function fmtTime(v: TimeVal) { return `${String(v.hour).padStart(2,"0")}:${Strin
 export function CreateTask() {
   const navigate    = useNavigate();
   const { id }      = useParams();
-  const { addTask } = useTasks();
+  const { addTask, tasks } = useTasks();
+
+  const assignees = useMemo(() => {
+    const palette = ["#2563EB", "#7C3AED", "#DB2777", "#16A34A", "#EA580C", "#0891B2", "#D97706", "#DC2626"];
+    const map = new Map<string, { initials: string; name: string; color: string }>();
+
+    const toInitials = (name: string) => {
+      const parts = name.trim().split(/\s+/).filter(Boolean);
+      if (parts.length === 0) return "U";
+      if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+      return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    };
+
+    try {
+      const raw = localStorage.getItem("currentUser");
+      if (raw) {
+        const parsed = JSON.parse(raw) as { name?: string; avatarColor?: string };
+        if (parsed.name) {
+          map.set(parsed.name, {
+            initials: toInitials(parsed.name),
+            name: parsed.name,
+            color: parsed.avatarColor || palette[0],
+          });
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    tasks.forEach((t, index) => {
+      const key = t.assigneeName || t.assignee;
+      if (!key || map.has(key)) return;
+      map.set(key, {
+        initials: t.assignee || toInitials(key),
+        name: t.assigneeName || key,
+        color: t.assigneeColor || palette[index % palette.length],
+      });
+    });
+
+    return Array.from(map.values()).length > 0
+      ? Array.from(map.values())
+      : [{ initials: "U", name: "Unassigned", color: "#9CA3AF" }];
+  }, [tasks]);
 
   const [title,       setTitle]       = useState("");
   const [description, setDescription] = useState("");
@@ -117,7 +153,7 @@ export function CreateTask() {
   const handleCreate = () => {
     if (!isValid) return;
     toastStore.show("Task added successfully!");
-    const a = ASSIGNEES[assigneeIdx];
+    const a = assignees[assigneeIdx] ?? assignees[0];
     addTask({
       title:         title.trim(),
       description:   description.trim(),
@@ -256,8 +292,8 @@ export function CreateTask() {
           <div className="bg-white rounded-2xl p-4 shadow-sm">
             <div className="flex items-center gap-1.5 mb-2"><Users size={13} color="#374151" /><span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>Assignee</span></div>
             <DropDown open={showAssignee} onToggle={() => { setShowAssignee(!showAssignee); setShowPriority(false); setShowStatus(false); }}
-              preview={<div className="flex items-center gap-2"><div style={{ width: 22, height: 22, borderRadius: "50%", background: ASSIGNEES[assigneeIdx].color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: "white" }}>{ASSIGNEES[assigneeIdx].initials}</div><span style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>{ASSIGNEES[assigneeIdx].name}</span></div>}>
-              {ASSIGNEES.map((a, i) => (
+              preview={<div className="flex items-center gap-2"><div style={{ width: 22, height: 22, borderRadius: "50%", background: (assignees[assigneeIdx] ?? assignees[0]).color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: "white" }}>{(assignees[assigneeIdx] ?? assignees[0]).initials}</div><span style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>{(assignees[assigneeIdx] ?? assignees[0]).name}</span></div>}>
+              {assignees.map((a, i) => (
                 <button key={a.initials} onClick={() => { setAssigneeIdx(i); setShowAssignee(false); }}
                   style={{ width: "100%", padding: "10px 14px", textAlign: "left", fontSize: 13, fontWeight: assigneeIdx === i ? 700 : 400, color: "#111827", background: assigneeIdx === i ? "#F3F4F6" : "white", border: "none", borderTop: i > 0 ? "1px solid #F3F4F6" : "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ width: 28, height: 28, borderRadius: "50%", background: a.color, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, flexShrink: 0 }}>{a.initials}</div>

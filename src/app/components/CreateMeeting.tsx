@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "../router";
 import { ArrowLeft, Plus, Trash2, Calendar, Clock } from "lucide-react";
 import { PhoneFrame } from "./PhoneFrame";
 import { useMeetings } from "../context/MeetingContext";
+import { useWorkspaces } from "../context/WorkspaceContext";
 import { toastStore } from "../context/ToastStore";
 import { CalendarPicker } from "./CalendarPicker";
 import { LoadingButton } from "./LoadingButton";
@@ -144,11 +145,30 @@ function deadlineFromPollLength(pl: string): string {
   return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 }
 
+function getStoredCurrentUser() {
+  try {
+    const raw = localStorage.getItem("currentUser") ?? localStorage.getItem("collabhive.auth.currentUser");
+    return raw ? JSON.parse(raw) as { email?: string } : null;
+  } catch {
+    return null;
+  }
+}
+
+function getWorkspaceMemberCount(workspaceMembers: string[]) {
+  const currentUser = getStoredCurrentUser();
+  const members = new Set(workspaceMembers.filter(Boolean));
+  if (currentUser?.email) members.add(currentUser.email);
+  return Math.max(members.size, 1);
+}
+
 // ─── main component ──────────────────────────────────────────────────────────
 export function CreateMeeting() {
   const navigate    = useNavigate();
   const { id }      = useParams();
   const { addPoll, polls } = useMeetings();
+  const { getWorkspace } = useWorkspaces();
+  const workspace = getWorkspace(id ?? "");
+  const workspaceMemberCount = workspace ? getWorkspaceMemberCount(workspace.members) : 1;
 
   // Build a set of dates that already have meetings for dot markers
   const existingMeetingDates = new Set<string>();
@@ -192,7 +212,7 @@ export function CreateMeeting() {
     addPoll({
       workspaceId: id ?? "",
       agenda: agenda.trim(),
-      totalVotes: 5,
+      totalVotes: workspaceMemberCount,
       votedCount: 0,
       deadline: deadlineFromPollLength(pollLength),
       timeSlots: slots.map((s, i) => ({

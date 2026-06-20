@@ -1,73 +1,23 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { motion, AnimatePresence } from "../motion-compat";
 import { Bell, X, Clock, AlertCircle, CheckCircle, Calendar, ArrowLeft, Trash2 } from "lucide-react";
+import { useWorkspaces } from "../context/WorkspaceContext";
+import { useTasks } from "../context/TaskContext";
+import { useMeetings } from "../context/MeetingContext";
 
 interface NotificationOverlayProps {
   onClose: () => void;
 }
 
-const ALL_NOTIFICATIONS = [
-  {
-    id: 1, icon: Clock, type: "warning",
-    title: "Upcoming Deadline Tomorrow",
-    message: "Software Methodology Project final deliverable is due",
-    time: "2 hours ago", workspace: "Software Methodology Project",
-  },
-  {
-    id: 2, icon: Calendar, type: "info",
-    title: "Meeting Starts in 30 Minutes",
-    message: "UI/UX Case Study - Design Review Session",
-    time: "30 minutes ago", workspace: "UI/UX Case Study",
-  },
-  {
-    id: 3, icon: CheckCircle, type: "success",
-    title: "New Task Assigned",
-    message: "You've been assigned to 'Create wireframes' task",
-    time: "1 hour ago", workspace: "UI/UX Case Study",
-  },
-  {
-    id: 4, icon: AlertCircle, type: "alert",
-    title: "Pending Duties Require Attention",
-    message: "You have 3 pending tasks in Software Testing Project",
-    time: "3 hours ago", workspace: "Software Testing Project",
-  },
-  {
-    id: 5, icon: CheckCircle, type: "success",
-    title: "Task Completed",
-    message: "'Landing page redesign' marked as done by Sara Miller",
-    time: "5 hours ago", workspace: "Software Methodology Project",
-  },
-  {
-    id: 6, icon: Calendar, type: "info",
-    title: "New Meeting Poll Created",
-    message: "Sprint Planning & Retrospective — vote before June 14",
-    time: "6 hours ago", workspace: "Software Methodology Project",
-  },
-  {
-    id: 7, icon: AlertCircle, type: "alert",
-    title: "Overdue Task",
-    message: "'Database schema update' is past its due date",
-    time: "8 hours ago", workspace: "Software Testing Project",
-  },
-  {
-    id: 8, icon: Clock, type: "warning",
-    title: "Deadline in 7 Days",
-    message: "UI/UX Case Study final submission is approaching",
-    time: "Yesterday", workspace: "UI/UX Case Study",
-  },
-  {
-    id: 9, icon: CheckCircle, type: "success",
-    title: "New Member Joined",
-    message: "Natasha K. joined Software Methodology Project",
-    time: "Yesterday", workspace: "Software Methodology Project",
-  },
-  {
-    id: 10, icon: AlertCircle, type: "alert",
-    title: "Comment on Your Task",
-    message: "Alex Brown commented on 'API endpoint testing'",
-    time: "2 days ago", workspace: "Software Testing Project",
-  },
-];
+type OverlayNotification = {
+  id: number;
+  icon: any;
+  type: "warning" | "info" | "success" | "alert";
+  title: string;
+  message: string;
+  time: string;
+  workspace: string;
+};
 
 const TYPE_STYLE: Record<string, { bg: string; text: string }> = {
   warning: { bg: "#FEF3C7", text: "#D97706" },
@@ -77,11 +27,38 @@ const TYPE_STYLE: Record<string, { bg: string; text: string }> = {
 };
 
 export function NotificationOverlay({ onClose }: NotificationOverlayProps) {
+  const { workspaces } = useWorkspaces();
+  const { tasks } = useTasks();
+  const { polls } = useMeetings();
+
+  const workspaceById = new Map(workspaces.map((ws) => [ws.id, ws.title]));
+
+  const allNotifications: OverlayNotification[] = [
+    ...tasks.map((task, index) => ({
+      id: Number(`${task.id}`.replace(/\D/g, "")) || Date.now() + index,
+      icon: task.status === "done" ? CheckCircle : task.priority === "High" ? AlertCircle : Clock,
+      type: task.status === "done" ? "success" as const : task.priority === "High" ? "alert" as const : "warning" as const,
+      title: task.status === "done" ? "Task Completed" : "Task Update",
+      message: task.title,
+      time: "Recent",
+      workspace: workspaceById.get(task.workspaceId) || "Workspace",
+    })),
+    ...polls.map((poll, index) => ({
+      id: Number(`${poll.id}`.replace(/\D/g, "")) || Date.now() + 1000 + index,
+      icon: Calendar,
+      type: "info" as const,
+      title: "Meeting Poll",
+      message: poll.agenda || "Meeting details available",
+      time: "Recent",
+      workspace: workspaceById.get(poll.workspaceId) || "Workspace",
+    })),
+  ];
+
   const [viewAll, setViewAll] = useState(false);
   const [dismissed, setDismissed] = useState<Set<number>>(new Set());
   const [readIds,   setReadIds]   = useState<Set<number>>(new Set());
 
-  const visible    = ALL_NOTIFICATIONS.filter((n) => !dismissed.has(n.id));
+  const visible    = allNotifications.filter((n) => !dismissed.has(n.id));
   const preview    = visible.slice(0, 4);
   const displayed  = viewAll ? visible : preview;
   const unreadCount = visible.filter((n) => !readIds.has(n.id)).length;
@@ -106,7 +83,7 @@ export function NotificationOverlay({ onClose }: NotificationOverlayProps) {
         transition={{ type: "spring", damping: 25, stiffness: 300 }}
         className="bg-white rounded-2xl shadow-2xl w-full mt-14"
         style={{ maxHeight: "80%" , display: "flex", flexDirection: "column" }}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">

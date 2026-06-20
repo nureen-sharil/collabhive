@@ -17,13 +17,33 @@ function VoteSpinner() {
 }
 import { PhoneFrame } from "./PhoneFrame";
 import { useMeetings } from "../context/MeetingContext";
+import { useWorkspaces } from "../context/WorkspaceContext";
+
+function getWorkspaceMemberCount(workspaceMembers: string[]) {
+  const currentUser = getStoredCurrentUser();
+  const members = new Set(workspaceMembers.filter(Boolean));
+  if (currentUser?.email) members.add(currentUser.email);
+  return Math.max(members.size, 1);
+}
+
+function getStoredCurrentUser() {
+  try {
+    const raw = localStorage.getItem("currentUser") ?? localStorage.getItem("collabhive.auth.currentUser");
+    return raw ? JSON.parse(raw) as { email?: string } : null;
+  } catch {
+    return null;
+  }
+}
 
 export function MeetingScheduler() {
   const navigate        = useNavigate();
   const { id }          = useParams();
   const { polls, updatePoll } = useMeetings();
+  const { getWorkspace } = useWorkspaces();
 
   const workspacePolls = polls.filter((p) => p.workspaceId === id || p.workspaceId === "1");
+  const workspace = getWorkspace(id ?? "");
+  const workspaceMemberCount = workspace ? getWorkspaceMemberCount(workspace.members) : 1;
 
   const [votedPolls,     setVotedPolls]     = useState<Set<string>>(new Set());
   const [submittingPoll, setSubmittingPoll] = useState<string | null>(null);
@@ -46,7 +66,8 @@ export function MeetingScheduler() {
     setSubmittingPoll(pollId);
     setTimeout(() => {
       // Success phase — commit the vote
-      updatePoll(pollId, { votedCount: Math.min(poll.votedCount + 1, poll.totalVotes) });
+      const maxVotes = workspace ? getWorkspaceMemberCount(workspace.members) : Math.max(poll.totalVotes, 1);
+      updatePoll(pollId, { votedCount: Math.min(poll.votedCount + 1, maxVotes) });
       setVotedPolls((prev) => new Set(prev).add(pollId));
       setSubmittingPoll(null);
       setToast("Vote submitted successfully!");
@@ -81,10 +102,11 @@ export function MeetingScheduler() {
         )}
         <div className="space-y-4">
           {workspacePolls.map((poll) => {
-            const voteRatio = poll.votedCount / Math.max(poll.totalVotes, 1);
+            const totalParticipants = workspace ? workspaceMemberCount : Math.max(poll.totalVotes ?? 1, 1);
+            const voteRatio = poll.votedCount / Math.max(totalParticipants, 1);
             const maxVotes  = Math.max(...poll.timeSlots.map((s) => s.votes), 0);
             const isVoted   = votedPolls.has(poll.id);
-            const isNew     = poll.votedCount === 0 && poll.totalVotes === 5;
+            const isNew     = poll.votedCount === 0;
 
             return (
               <div key={poll.id} className="bg-white rounded-2xl p-4 shadow-sm"
@@ -107,7 +129,7 @@ export function MeetingScheduler() {
                 <div className="flex items-center gap-4 mb-3">
                   <div className="flex items-center gap-1.5">
                     <Users size={14} color="#6B7280" />
-                    <span style={{ fontSize: 12, color: "#6B7280" }}>{poll.votedCount}/{poll.totalVotes} voted</span>
+                    <span style={{ fontSize: 12, color: "#6B7280" }}>{poll.votedCount}/{totalParticipants} voted</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <Clock size={14} color="#F97316" />

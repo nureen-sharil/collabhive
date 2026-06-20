@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect, type MouseEvent } from "react";
 import { useNavigate } from "../router";
 import {
   Menu, Bell, Search, Plus, X, Edit3, Trash2,
@@ -51,7 +51,7 @@ function Sidebar({ onClose, user }: { onClose: () => void, user: { name: string,
         animate={{ x: 0 }}
         exit={{ x: -280 }}
         transition={{ type: "spring", damping: 28, stiffness: 320 }}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}
         style={{
           position: "absolute", top: 0, left: 0, bottom: 0,
           width: 260, background: "white", display: "flex", flexDirection: "column",
@@ -152,7 +152,7 @@ function CardMenu({
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.88, y: -4 }}
       transition={{ duration: 0.12 }}
-      onClick={(e) => e.stopPropagation()}
+      onClick={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}
       style={{
         position: "absolute", top: 30, right: 6, zIndex: 20,
         background: "white", borderRadius: 12,
@@ -272,7 +272,7 @@ export function Dashboard() {
   const { workspaces, removeWorkspace } = useWorkspaces();
 
   // State to hold the current user details, default to placeholder if nothing in localStorage
-  const [currentUser, setCurrentUser] = useState({ name: "Seroja Jane", email: "seroja.jane@collabhive.io" });
+  const [currentUser, setCurrentUser] = useState({ name: "User", email: "" });
 
   useEffect(() => {
     // Retrieve the authenticated user from localStorage when component mounts
@@ -282,8 +282,8 @@ export function Dashboard() {
         const parsed = JSON.parse(userStr);
         if (parsed && typeof parsed === "object") {
           setCurrentUser({
-            name: parsed.name || "Seroja Jane",
-            email: parsed.email || "seroja.jane@collabhive.io"
+            name: parsed.name || "User",
+            email: parsed.email || ""
           });
         }
       }
@@ -504,7 +504,7 @@ export function Dashboard() {
                 >
                   {/* Three-dot button */}
                   <button
-                    onClick={(e) => { e.stopPropagation(); setOpenMenu(isMenuOpen ? null : ws.id); }}
+                    onClick={(e: MouseEvent<HTMLButtonElement>) => { e.stopPropagation(); setOpenMenu(isMenuOpen ? null : ws.id); }}
                     style={{
                       position: "absolute", top: 8, right: 8,
                       width: 24, height: 24, borderRadius: "50%",
@@ -533,7 +533,7 @@ export function Dashboard() {
                   <div style={{ paddingTop: 8 }}>
                     {/* Inline rename input */}
                     {isRenaming ? (
-                      <div style={{ display:"flex",gap:4,alignItems:"center",marginBottom:10 }} onClick={(e) => e.stopPropagation()}>
+                      <div style={{ display:"flex",gap:4,alignItems:"center",marginBottom:10 }} onClick={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}>
                         <input
                           autoFocus
                           value={renameValue}
@@ -542,7 +542,7 @@ export function Dashboard() {
                           style={{ flex:1,fontSize:12,fontWeight:600,color:"#111827",border:"1.5px solid #2563EB",borderRadius:6,padding:"4px 6px",outline:"none",background:"white" }}
                         />
                         <button
-                          onClick={(e) => { e.stopPropagation(); confirmRename(); }}
+                          onClick={(e: MouseEvent<HTMLButtonElement>) => { e.stopPropagation(); confirmRename(); }}
                           style={{ width:24,height:24,borderRadius:"50%",background:"#2563EB",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}
                         >
                           <Check size={12} color="white" strokeWidth={3} />

@@ -1,4 +1,5 @@
 import { useState, useEffect, type ReactNode } from "react";
+import axios from "axios";
 
 export interface Workspace {
   id: string;
@@ -12,53 +13,103 @@ export interface Workspace {
   createdAt: string;
 }
 
-// ─── module-level singleton ───────────────────────────────────────────────────
+const API_BASE_URL = "http://localhost:8000/api";
+
+// ─── module-level singleton state ─────────────────────────────────────────────
 type Listener = () => void;
 const _listeners = new Set<Listener>();
 
-const STORAGE_KEY = "collabhive.workspaces";
+let _workspaces: Workspace[] = [];
 
-function readWorkspacesFromStorage(): Workspace[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as Workspace[]) : [];
-  } catch {
-    return [];
-  }
+function _notify() {
+  _listeners.forEach((l) => l());
 }
 
-function writeWorkspacesToStorage(workspaces: Workspace[]) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(workspaces));
-  } catch {
-    // ignore storage write failures
-  }
+// ─── Data conversion adapter utilities ────────────────────────────────────────
+function formatFromBackend(backendData: any): Workspace {
+  return {
+    id: String(backendData.id),
+    title: backendData.workspace_name,
+    description: backendData.description || "",
+    progress: backendData.progress ?? 0,
+    status: backendData.progress === 100 ? "Completed" : backendData.progress > 0 ? "In Progress" : "Not Started",
+    color: backendData.color || "#2563EB",
+    members: Array.isArray(backendData.members) ? backendData.members.map((m: any) => m.name || m.user_id) : [],
+    
+    // Maps the backend database field dynamically instead of hardcoding "TBD"
+    deadline: backendData.deadline ? backendData.deadline.split("T")[0] : "No Deadline", 
+    
+    createdAt: backendData.created_at ? backendData.created_at.split("T")[0] : new Date().toISOString().split("T")[0]
+  };
 }
 
-let _workspaces: Workspace[] = readWorkspacesFromStorage();
-
-function _notify() { _listeners.forEach((l) => l()); }
-
-// ─── public store API (no React) ─────────────────────────────────────────────
+// ─── public store API (refactored to perform backend persistence) ─────────────
 export const workspaceStore = {
   getAll: () => _workspaces,
+  
   get: (id: string) => _workspaces.find((w) => w.id === id),
-  add: (data: Omit<Workspace, "id" | "progress" | "status" | "createdAt">): string => {
-    const id = Date.now().toString();
-    _workspaces = [
-      ..._workspaces,
-      { ...data, id, progress: 0, status: "Not Started", createdAt: new Date().toISOString().split("T")[0] },
-    ];
-    writeWorkspacesToStorage(_workspaces);
-    _notify();
-    return id;
+
+  // Synchronizes full database records matching the current authenticated user context
+  syncFromBackend: async (userId: number): Promise<void> => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/users/${userId}/workspaces`);
+      _workspaces = Array.isArray(response.data) ? response.data.map(formatFromBackend) : [];
+      _notify();
+    } catch (err) {
+      console.error("Failed to load workspace updates from database record layer:", err);
+    }
   },
-  remove: (id: string) => {
-    _workspaces = _workspaces.filter((w) => w.id !== id);
-    writeWorkspacesToStorage(_workspaces);
-    _notify();
+
+  // Expects 'deadline' input parameters matching frontend creation states
+  add: async (data: { title: string; description: string; color: string; deadline: string }): Promise<string> => {
+    let currentUserId = 1;
+
+    const sessionStr = localStorage.getItem("user");
+    if (sessionStr) {
+      try {
+        const currentUser = JSON.parse(sessionStr);
+        if (currentUser && (currentUser.id || currentUser.user_id)) {
+          currentUserId = currentUser.id || currentUser.user_id;
+        }
+      } catch (e) {
+        console.warn("Failed to parse user session string:", e);
+      }
+    }
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/workspaces`, {
+        workspace_name: data.title,
+        description: data.description,
+        color: data.color,
+        owner_id: currentUserId,
+        deadline: data.deadline // Sends deadline straight to your FastAPI backend route
+      });
+
+      const parsedNewWorkspace = formatFromBackend(response.data);
+      _workspaces = [..._workspaces, parsedNewWorkspace];
+      _notify();
+      
+      return parsedNewWorkspace.id;
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || "Database workspace insertion failed";
+      throw new Error(msg);
+    }
+  },
+
+  remove: async (id: string): Promise<void> => {
+    const sessionStr = localStorage.getItem("user");
+    if (!sessionStr) return;
+    const currentUser = JSON.parse(sessionStr);
+
+    try {
+      await axios.delete(`${API_BASE_URL}/workspaces/${id}`, {
+        params: { current_user_id: currentUser.id }
+      });
+      _workspaces = _workspaces.filter((w) => w.id !== id);
+      _notify();
+    } catch (err) {
+      console.error("Failed to remove workspace record from backend instance data store:", err);
+    }
   },
 };
 
@@ -67,17 +118,34 @@ export function useWorkspaces() {
   const [, rerender] = useState(0);
 
   useEffect(() => {
-    _workspaces = readWorkspacesFromStorage();
+    // Initializing hook baseline listeners
     const listener: Listener = () => rerender((n) => n + 1);
     _listeners.add(listener);
-    return () => { _listeners.delete(listener); };
+
+    // Automatically check for valid user instances on mount to query database on load or refresh
+    const sessionStr = localStorage.getItem("user");
+    if (sessionStr) {
+      try {
+        const user = JSON.parse(sessionStr);
+        if (user?.id) {
+          workspaceStore.syncFromBackend(user.id);
+        }
+      } catch (e) {
+        console.error("Error parsing user context:", e);
+      }
+    }
+
+    return () => {
+      _listeners.delete(listener);
+    };
   }, []);
 
   return {
     workspaces: _workspaces,
-    addWorkspace:    workspaceStore.add,
-    getWorkspace:    workspaceStore.get,
-    removeWorkspace: workspaceStore.remove,
+    // FIXED: Added explicit mapping parameter structure support for 'deadline' property layout updates
+    addWorkspace: (data: { title: string; description: string; color: string; deadline: string }) => workspaceStore.add(data),
+    getWorkspace: (id: string) => workspaceStore.get(id),
+    removeWorkspace: (id: string) => workspaceStore.remove(id),
   };
 }
 

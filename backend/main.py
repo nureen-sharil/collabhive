@@ -1,33 +1,29 @@
 from datetime import datetime
-
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, inspect, text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
-import bcrypt
 import os
+import bcrypt
+from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, inspect, text, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session, relationship
 
-# Load .env file if present (install python-dotenv or set DATABASE_URL in your environment)
+# Load .env file if present
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    pass  # python-dotenv not installed — DATABASE_URL must be set in the environment instead
+    pass
 
 # Database setup
-# Priority: environment variable > .env file > localhost fallback
-DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:@localhost:3307/collab_hive")
+DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:1234@localhost:3307/collab_hive")
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# Initialize FastAPI app
 app = FastAPI()
 
-# Enable CORS so your React frontend (e.g., localhost:5173) can talk to this backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -36,7 +32,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─── Database Model ──────────────────────────────────────────────────────────
+# ─── Database Models ──────────────────────────────────────────────────────────
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
@@ -45,9 +42,37 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
 
 
+class Workspace(Base):
+    __tablename__ = "workspaces"
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    color = Column(String(7), nullable=False, default="#2563EB")
+    progress = Column(Integer, nullable=False, default=0)
+    
+    # FIX: Added deadline field mapping straight to the database layer
+    deadline = Column(String(50), nullable=True, default="")
+    
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    members = relationship("WorkspaceMember", back_populates="workspace", cascade="all, delete-orphan")
+
+
+class WorkspaceMember(Base):
+    __tablename__ = "workspace_members"
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(20), nullable=False, default="member")  # 'owner' or 'member'
+    joined_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="members")
+
+
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
-
     id = Column(Integer, primary_key=True, index=True)
     workspace_id = Column(String(100), index=True, nullable=False)
     sender_id = Column(Integer, index=True, nullable=False)
@@ -59,9 +84,8 @@ class ChatMessage(Base):
     voice_duration = Column(String(20), nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
 
-# Create the table in the database if it doesn't exist yet
-Base.metadata.create_all(bind=engine)
 
+Base.metadata.create_all(bind=engine)
 
 def ensure_chat_message_schema():
     inspector = inspect(engine)
@@ -87,10 +111,10 @@ def ensure_chat_message_schema():
         for statement in ddl_statements:
             connection.execute(text(statement))
 
-
 ensure_chat_message_schema()
 
 # ─── Pydantic Schemas ────────────────────────────────────────────────────────
+
 class RegisterRequest(BaseModel):
     name: str
     email: EmailStr
@@ -100,12 +124,52 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
-
 class UserResponse(BaseModel):
     id: int
     name: str
     email: EmailStr
 
+class WorkspaceCreate(BaseModel):
+    workspace_name: str = Field(..., min_length=1, max_length=100)
+    description: str | None = None
+    color: str = "#2563EB"
+    owner_id: int
+    
+    # FIX: Expose validation rules for deadline inputs
+    deadline: str | None = ""
+
+class WorkspaceUpdate(BaseModel):
+    workspace_name: str | None = Field(None, min_length=1, max_length=100)
+    description: str | None = None
+    color: str | None = None
+    progress: int | None = Field(None, ge=0, le=100)
+    deadline: str | None = None
+
+class WorkspaceMemberResponse(BaseModel):
+    user_id: int
+    name: str
+    email: str
+    role: str
+
+    class Config:
+        from_attributes = True
+
+class WorkspaceResponse(BaseModel):
+    id: int
+    workspace_name: str
+    description: str | None
+    owner_id: int
+    color: str
+    progress: int
+    
+    # FIX: Ensure field matches payload extraction signatures
+    deadline: str | None = ""
+    
+    created_at: datetime
+    members: list[WorkspaceMemberResponse] = []
+
+    class Config:
+        from_attributes = True
 
 class SendMessageRequest(BaseModel):
     senderId: int
@@ -115,7 +179,6 @@ class SendMessageRequest(BaseModel):
     attachmentName: str | None = None
     attachmentUrl: str | None = None
     voiceDuration: str | None = None
-
 
 class ChatMessageResponse(BaseModel):
     messageId: int
@@ -129,6 +192,190 @@ class ChatMessageResponse(BaseModel):
     voiceDuration: str | None = None
     timestamp: datetime
 
+# ─── Dependencies & Security Guards ─────────────────────────────────────────
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def verify_membership(workspace_id: int, user_id: int, db: Session):
+    member = db.query(WorkspaceMember).filter(
+        WorkspaceMember.workspace_id == workspace_id, 
+        WorkspaceMember.user_id == user_id
+    ).first()
+    if not member:
+        raise HTTPException(status_code=403, detail="Access denied: You are not a member of this workspace")
+    return member
+
+# ─── Authentication Endpoints ───────────────────────────────────────────────
+
+@app.post("/api/register")
+def register(request: RegisterRequest, db: Session = Depends(get_db)):
+    if db.query(User).filter(User.email == request.email).first():
+        raise HTTPException(status_code=409, detail="Email already registered")
+    
+    salt = bcrypt.gensalt()
+    hashed_password = bcrypt.hashpw(request.password.encode('utf-8'), salt).decode('utf-8')
+    new_user = User(name=request.name, email=request.email, password_hash=hashed_password)
+    db.add(new_user)
+    db.commit()
+    return {"message": "User registered successfully"}
+
+@app.post("/api/login")
+def login(request: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == request.email).first()
+    if not user or not bcrypt.checkpw(request.password.encode('utf-8'), user.password_hash.encode('utf-8')):
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
+    return {"id": user.id, "name": user.name, "email": user.email}
+
+@app.get("/api/users/by-email/{email}", response_model=UserResponse)
+def get_user_by_email(email: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.strip().lower()).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return UserResponse(id=user.id, name=user.name, email=user.email)
+
+# ─── Workspaces Feature Endpoints ───────────────────────────────────────────
+
+@app.post("/api/workspaces", response_model=WorkspaceResponse, status_code=201)
+def create_workspace(payload: WorkspaceCreate, db: Session = Depends(get_db)):
+    if not payload.workspace_name.strip():
+        raise HTTPException(status_code=400, detail="Workspace name cannot be empty")
+    
+    creator = db.query(User).filter(User.id == payload.owner_id).first()
+    if not creator:
+        raise HTTPException(status_code=404, detail="Workspace owner user ID not found")
+
+    duplicate = db.query(Workspace).filter(
+        Workspace.workspace_name == payload.workspace_name.strip(),
+        Workspace.owner_id == payload.owner_id
+    ).first()
+    if duplicate:
+        raise HTTPException(status_code=400, detail="You already own a workspace with this name")
+
+    # FIX: Included 'deadline' mapping parameters inside instantiation parameters
+    new_ws = Workspace(
+        workspace_name=payload.workspace_name.strip(),
+        description=payload.description,
+        color=payload.color,
+        owner_id=payload.owner_id,
+        deadline=payload.deadline
+    )
+    db.add(new_ws)
+    db.commit()
+    db.refresh(new_ws)
+
+    owner_membership = WorkspaceMember(
+        workspace_id=new_ws.id,
+        user_id=payload.owner_id,
+        role="owner"
+    )
+    db.add(owner_membership)
+    db.commit()
+    
+    m_user = db.query(User).filter(User.id == payload.owner_id).first()
+    members_list = [WorkspaceMemberResponse(user_id=m_user.id, name=m_user.name, email=m_user.email, role="owner")]
+    
+    return WorkspaceResponse(
+        id=new_ws.id, workspace_name=new_ws.workspace_name, description=new_ws.description,
+        owner_id=new_ws.owner_id, color=new_ws.color, progress=new_ws.progress, 
+        deadline=new_ws.deadline, created_at=new_ws.created_at, members=members_list
+    )
+
+@app.get("/api/users/{user_id}/workspaces", response_model=list[WorkspaceResponse])
+def get_user_workspaces(user_id: int, db: Session = Depends(get_db)):
+    memberships = db.query(WorkspaceMember).filter(WorkspaceMember.user_id == user_id).all()
+    workspace_ids = [m.workspace_id for m in memberships]
+    
+    workspaces = db.query(Workspace).filter(Workspace.id.in_(workspace_ids)).all()
+    
+    results = []
+    for ws in workspaces:
+        m_list = []
+        for mem in ws.members:
+            m_user = db.query(User).filter(User.id == mem.user_id).first()
+            if m_user:
+                m_list.append(WorkspaceMemberResponse(
+                    user_id=m_user.id, name=m_user.name, email=m_user.email, role=mem.role
+                ))
+        results.append(WorkspaceResponse(
+            id=ws.id, workspace_name=ws.workspace_name, description=ws.description,
+            owner_id=ws.owner_id, color=ws.color, progress=ws.progress, 
+            deadline=ws.deadline, created_at=ws.created_at, members=m_list
+        ))
+    return results
+
+@app.get("/api/workspaces/{workspace_id}", response_model=WorkspaceResponse)
+def get_workspace_by_id(workspace_id: int, current_user_id: int, db: Session = Depends(get_db)):
+    verify_membership(workspace_id, current_user_id, db)
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+        
+    m_list = []
+    for m in ws.members:
+        m_user = db.query(User).filter(User.id == m.user_id).first()
+        if m_user:
+            m_list.append(WorkspaceMemberResponse(user_id=m_user.id, name=m_user.name, email=m_user.email, role=m.role))
+            
+    return WorkspaceResponse(
+        id=ws.id, workspace_name=ws.workspace_name, description=ws.description,
+        owner_id=ws.owner_id, color=ws.color, progress=ws.progress, 
+        deadline=ws.deadline, created_at=ws.created_at, members=m_list
+    )
+
+@app.put("/api/workspaces/{workspace_id}", response_model=WorkspaceResponse)
+def update_workspace(workspace_id: int, current_user_id: int, payload: WorkspaceUpdate, db: Session = Depends(get_db)):
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    
+    if ws.owner_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Only workspace owners can alter metadata settings")
+
+    if payload.workspace_name is not None:
+        ws.workspace_name = payload.workspace_name.strip()
+    if payload.description is not None:
+        ws.description = payload.description
+    if payload.color is not None:
+         ws.color = payload.color
+    if payload.progress is not None:
+         ws.progress = payload.progress
+    if payload.deadline is not None:
+         ws.deadline = payload.deadline
+
+    db.commit()
+    db.refresh(ws)
+    
+    m_list = []
+    for m in ws.members:
+        m_user = db.query(User).filter(User.id == m.user_id).first()
+        if m_user:
+            m_list.append(WorkspaceMemberResponse(user_id=m_user.id, name=m_user.name, email=m_user.email, role=m.role))
+            
+    return WorkspaceResponse(
+        id=ws.id, workspace_name=ws.workspace_name, description=ws.description,
+        owner_id=ws.owner_id, color=ws.color, progress=ws.progress, 
+        deadline=ws.deadline, created_at=ws.created_at, members=m_list
+    )
+
+@app.delete("/api/workspaces/{workspace_id}", status_code=200)
+def delete_workspace(workspace_id: int, current_user_id: int, db: Session = Depends(get_db)):
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    
+    if ws.owner_id != current_user_id:
+         raise HTTPException(status_code=403, detail="Only workspace owners can delete this workspace")
+         
+    db.delete(ws)
+    db.commit()
+    return {"message": "Workspace successfully removed"}
+
+# ─── Chat Legacy Endpoints (Unchanged) ──────────────────────────────────────
 
 def serialize_message(message: ChatMessage, sender_name: str) -> ChatMessageResponse:
     return ChatMessageResponse(
@@ -144,49 +391,6 @@ def serialize_message(message: ChatMessage, sender_name: str) -> ChatMessageResp
         timestamp=message.created_at,
     )
 
-# ─── Dependency ──────────────────────────────────────────────────────────────
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-# ─── Endpoints ───────────────────────────────────────────────────────────────
-@app.post("/api/register")
-def register(request: RegisterRequest, db: Session = Depends(get_db)):
-    # Check if a user with this email already exists
-    if db.query(User).filter(User.email == request.email).first():
-        raise HTTPException(status_code=409, detail="Email already registered")
-    
-    # Hash the password and insert the new user record into the database
-    salt = bcrypt.gensalt()
-    hashed_password = bcrypt.hashpw(request.password.encode('utf-8'), salt).decode('utf-8')
-    new_user = User(name=request.name, email=request.email, password_hash=hashed_password)
-    db.add(new_user)
-    db.commit()
-    return {"message": "User registered successfully"}
-
-@app.post("/api/login")
-def login(request: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == request.email).first()
-    
-    # Verify that the user exists and the password matches the stored hash
-    if not user or not bcrypt.checkpw(request.password.encode('utf-8'), user.password_hash.encode('utf-8')):
-        raise HTTPException(status_code=401, detail="Incorrect email or password")
-    
-    # Return the user's name and email so the frontend can populate the Dashboard
-    return {"id": user.id, "name": user.name, "email": user.email}
-
-
-@app.get("/api/users/by-email/{email}", response_model=UserResponse)
-def get_user_by_email(email: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email.strip().lower()).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return UserResponse(id=user.id, name=user.name, email=user.email)
-
-
 @app.get("/api/workspaces/{workspace_id}/messages", response_model=list[ChatMessageResponse])
 def get_workspace_messages(workspace_id: str, db: Session = Depends(get_db)):
     rows = (
@@ -198,13 +402,8 @@ def get_workspace_messages(workspace_id: str, db: Session = Depends(get_db)):
     )
     return [serialize_message(message, sender.name) for message, sender in rows]
 
-
 @app.post("/api/workspaces/{workspace_id}/messages", response_model=ChatMessageResponse)
-def send_workspace_message(
-    workspace_id: str,
-    request: SendMessageRequest,
-    db: Session = Depends(get_db),
-):
+def send_workspace_message(workspace_id: str, request: SendMessageRequest, db: Session = Depends(get_db)):
     message_text = request.messageText.strip()
     has_attachment = bool(request.attachmentType and request.attachmentName)
     has_voice = bool(request.voiceDuration)

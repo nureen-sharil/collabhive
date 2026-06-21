@@ -117,37 +117,45 @@ export const workspaceStore = {
 export function useWorkspaces() {
   const [, rerender] = useState(0);
 
+  // Read the active storage token context directly during render evaluation
+  const sessionStr = localStorage.getItem("user");
+  let loggedInUserId: number | null = null;
+
+  if (sessionStr) {
+    try {
+      const user = JSON.parse(sessionStr);
+      if (user?.id) {
+        loggedInUserId = user.id;
+      }
+    } catch (e) {
+      console.error("Error parsing user context string:", e);
+    }
+  }
+
   useEffect(() => {
-    // Initializing hook baseline listeners
+    // Setup component notification listener
     const listener: Listener = () => rerender((n) => n + 1);
     _listeners.add(listener);
 
-    // Automatically check for valid user instances on mount to query database on load or refresh
-    const sessionStr = localStorage.getItem("user");
-    if (sessionStr) {
-      try {
-        const user = JSON.parse(sessionStr);
-        if (user?.id) {
-          workspaceStore.syncFromBackend(user.id);
-        }
-      } catch (e) {
-        console.error("Error parsing user context:", e);
-      }
+    // FIX: Trigger database synchronization whenever a valid user ID is detected or changed
+    if (loggedInUserId) {
+      console.log(`🔄 User session shift detected (ID: ${loggedInUserId}). Syncing database...`);
+      workspaceStore.syncFromBackend(loggedInUserId);
     }
 
     return () => {
       _listeners.delete(listener);
     };
-  }, []);
+  }, [loggedInUserId]); // 👈 Added dependency tracking to re-sync on login changes!
 
   return {
     workspaces: _workspaces,
-    // FIXED: Added explicit mapping parameter structure support for 'deadline' property layout updates
     addWorkspace: (data: { title: string; description: string; color: string; deadline: string }) => workspaceStore.add(data),
     getWorkspace: (id: string) => workspaceStore.get(id),
     removeWorkspace: (id: string) => workspaceStore.remove(id),
   };
 }
+
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   return <>{children}</>;

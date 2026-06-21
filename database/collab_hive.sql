@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS `workspace_members` (
   `id`           INT         NOT NULL AUTO_INCREMENT,
   `workspace_id` INT         NOT NULL,
   `user_id`      INT         NOT NULL,
-  `role`         VARCHAR(20) NOT NULL DEFAULT 'member',
+  `role`         VARCHAR(20) NOT NULL,
   `joined_at`    DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_workspace_user` (`workspace_id`, `user_id`),

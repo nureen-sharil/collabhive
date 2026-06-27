@@ -59,6 +59,11 @@ export const meetingStore = {
     writePollsToStorage(_polls);
     _notify();
   },
+  replacePollsForWorkspace: (workspaceId: string, newPolls: MeetingPoll[]) => {
+    _polls = [..._polls.filter((p) => p.workspaceId !== workspaceId), ...newPolls];
+    writePollsToStorage(_polls);
+    _notify();
+  },
 };
 
 // ─── hook ─────────────────────────────────────────────────────────────────────
@@ -76,6 +81,7 @@ export function useMeetings() {
     polls: _polls,
     addPoll: meetingStore.add,
     updatePoll: meetingStore.update,
+    replacePollsForWorkspace: meetingStore.replacePollsForWorkspace,
   };
 }
 

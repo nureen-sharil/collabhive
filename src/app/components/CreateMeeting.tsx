@@ -1,5 +1,7 @@
 import { useState } from "react";
+import axios from "axios";
 import { useNavigate, useParams } from "../router";
+import { buildApiUrl } from "../../lib/api";
 import { ArrowLeft, Plus, Trash2, Calendar, Clock } from "lucide-react";
 import { PhoneFrame } from "./PhoneFrame";
 import { useMeetings } from "../context/MeetingContext";
@@ -145,20 +147,24 @@ function deadlineFromPollLength(pl: string): string {
   return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 }
 
-function getStoredCurrentUser() {
-  try {
-    const raw = localStorage.getItem("currentUser") ?? localStorage.getItem("collabhive.auth.currentUser");
-    return raw ? JSON.parse(raw) as { email?: string } : null;
-  } catch {
-    return null;
-  }
+function getWorkspaceMemberCount(workspaceMembers: string[]) {
+  const members = new Set(workspaceMembers.filter(Boolean));
+  return Math.max(members.size, 1);
 }
 
-function getWorkspaceMemberCount(workspaceMembers: string[]) {
-  const currentUser = getStoredCurrentUser();
-  const members = new Set(workspaceMembers.filter(Boolean));
-  if (currentUser?.email) members.add(currentUser.email);
-  return Math.max(members.size, 1);
+function getStoredUserId(): number | null {
+  const keys = ["currentUser", "collabhive.auth.currentUser", "ch_auth_user", "user"];
+  for (const key of keys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as { id?: unknown; user_id?: unknown };
+      const rawId = parsed?.id ?? parsed?.user_id;
+      const n = Number(rawId);
+      if (Number.isFinite(n) && n > 0) return n;
+    } catch { /* ignore */ }
+  }
+  return null;
 }
 
 // ─── main component ──────────────────────────────────────────────────────────
@@ -172,7 +178,7 @@ export function CreateMeeting() {
 
   // Build a set of dates that already have meetings for dot markers
   const existingMeetingDates = new Set<string>();
-  polls.filter((p) => p.workspaceId === id || p.workspaceId === "1").forEach((p) => {
+  polls.filter((p) => p.workspaceId === id).forEach((p) => {
     p.timeSlots.forEach((s) => {
       // Slot date format: "June 15" — convert to "YYYY-M-D" for lookup
       const parts = s.date.split(" ");
@@ -206,22 +212,39 @@ export function CreateMeeting() {
     slots.length >= 2 &&
     slots.every((s) => s.dateSet && s.timeSet);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!isFormValid) return;
+    const userId = getStoredUserId();
+    const numericId = id ? parseInt(id) : null;
+    if (userId && numericId) {
+      try {
+        await axios.post(buildApiUrl(`/api/workspaces/${id}/meetings`), {
+          workspace_id: numericId,
+          agenda: agenda.trim(),
+          deadline: deadlineFromPollLength(pollLength),
+          slots: slots.map((s) => ({ date: slotDateLabel(s), time: slotTimeLabel(s) })),
+        });
+      } catch {
+        toastStore.show("Failed to create meeting. Please try again.");
+        return;
+      }
+    } else {
+      // Local fallback when no active user session
+      addPoll({
+        workspaceId: id ?? "",
+        agenda: agenda.trim(),
+        totalVotes: workspaceMemberCount,
+        votedCount: 0,
+        deadline: deadlineFromPollLength(pollLength),
+        timeSlots: slots.map((s, i) => ({
+          id: `new-${i}`,
+          date: slotDateLabel(s),
+          time: slotTimeLabel(s),
+          votes: 0,
+        })),
+      });
+    }
     toastStore.show("Meeting scheduled successfully!");
-    addPoll({
-      workspaceId: id ?? "",
-      agenda: agenda.trim(),
-      totalVotes: workspaceMemberCount,
-      votedCount: 0,
-      deadline: deadlineFromPollLength(pollLength),
-      timeSlots: slots.map((s, i) => ({
-        id: `new-${i}`,
-        date: slotDateLabel(s),
-        time: slotTimeLabel(s),
-        votes: 0,
-      })),
-    });
     navigate(`/workspace/${id}/meetings`);
   };
 

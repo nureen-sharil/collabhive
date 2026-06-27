@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import axios from "axios";
 import { useNavigate, useParams } from "../router";
+import { buildApiUrl } from "../../lib/api";
 import { ArrowLeft, Plus, Clock, Users, Calendar, CheckCircle, PartyPopper } from "lucide-react";
 import { motion, AnimatePresence } from "../motion-compat";
 import { GlobalToast } from "./GlobalToast";
@@ -20,34 +22,66 @@ import { useMeetings } from "../context/MeetingContext";
 import { useWorkspaces } from "../context/WorkspaceContext";
 
 function getWorkspaceMemberCount(workspaceMembers: string[]) {
-  const currentUser = getStoredCurrentUser();
   const members = new Set(workspaceMembers.filter(Boolean));
-  if (currentUser?.email) members.add(currentUser.email);
   return Math.max(members.size, 1);
 }
 
-function getStoredCurrentUser() {
-  try {
-    const raw = localStorage.getItem("currentUser") ?? localStorage.getItem("collabhive.auth.currentUser");
-    return raw ? JSON.parse(raw) as { email?: string } : null;
-  } catch {
-    return null;
+function getStoredUserId(): number | null {
+  const keys = ["currentUser", "collabhive.auth.currentUser", "ch_auth_user", "user"];
+  for (const key of keys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as { id?: unknown; user_id?: unknown };
+      const rawId = parsed?.id ?? parsed?.user_id;
+      const n = Number(rawId);
+      if (Number.isFinite(n) && n > 0) return n;
+    } catch { /* ignore */ }
   }
+  return null;
 }
 
 export function MeetingScheduler() {
   const navigate        = useNavigate();
   const { id }          = useParams();
-  const { polls, updatePoll } = useMeetings();
+  const { polls, updatePoll, replacePollsForWorkspace } = useMeetings();
   const { getWorkspace } = useWorkspaces();
 
-  const workspacePolls = polls.filter((p) => p.workspaceId === id || p.workspaceId === "1");
+  const workspacePolls = polls.filter((p) => p.workspaceId === id);
   const workspace = getWorkspace(id ?? "");
   const workspaceMemberCount = workspace ? getWorkspaceMemberCount(workspace.members) : 1;
 
   const [votedPolls,     setVotedPolls]     = useState<Set<string>>(new Set());
   const [submittingPoll, setSubmittingPoll] = useState<string | null>(null);
   const [toast,          setToast]          = useState<string | null>(null);
+
+  // Fetch polls from backend on mount; restores the current user's vote state across refreshes
+  useEffect(() => {
+    if (!id) return;
+    const userId = getStoredUserId();
+    const url = buildApiUrl(`/api/workspaces/${id}/meetings${userId ? `?current_user_id=${userId}` : ""}`);
+    axios.get(url).then((res) => {
+      const backendPolls = (res.data as any[]).map((p) => ({
+        id: String(p.id),
+        workspaceId: String(p.workspace_id),
+        agenda: p.agenda as string,
+        totalVotes: p.totalVotes as number,
+        votedCount: p.votedCount as number,
+        deadline: (p.deadline as string) || "",
+        selectedSlot: p.selectedSlot != null ? String(p.selectedSlot) : undefined,
+        timeSlots: (p.timeSlots as any[]).map((s) => ({
+          id: String(s.id),
+          date: s.date as string,
+          time: s.time as string,
+          votes: s.votes as number,
+        })),
+      }));
+      replacePollsForWorkspace(id, backendPolls);
+      setVotedPolls(new Set(
+        backendPolls.filter((p) => p.selectedSlot != null).map((p) => p.id)
+      ));
+    }).catch(() => { /* fall back to localStorage data */ });
+  }, [id]);
 
   const handleSlotSelect = (pollId: string, slotId: string) => {
     if (votedPolls.has(pollId)) return;
@@ -62,16 +96,46 @@ export function MeetingScheduler() {
     const poll = workspacePolls.find((p) => p.id === pollId);
     if (!poll?.selectedSlot || submittingPoll) return;
 
-    // Loading phase
     setSubmittingPoll(pollId);
     setTimeout(() => {
-      // Success phase — commit the vote
-      const maxVotes = workspace ? getWorkspaceMemberCount(workspace.members) : Math.max(poll.totalVotes, 1);
-      updatePoll(pollId, { votedCount: Math.min(poll.votedCount + 1, maxVotes) });
-      setVotedPolls((prev) => new Set(prev).add(pollId));
-      setSubmittingPoll(null);
-      setToast("Vote submitted successfully!");
-      setTimeout(() => setToast(null), 2800);
+      void (async () => {
+        const userId = getStoredUserId();
+        try {
+          if (userId) {
+            const res = await axios.post(buildApiUrl(`/api/meetings/${pollId}/vote`), {
+              user_id: userId,
+              slot_id: parseInt(poll.selectedSlot!),
+            });
+            const p = res.data as any;
+            updatePoll(pollId, {
+              votedCount: p.votedCount as number,
+              totalVotes: p.totalVotes as number,
+              timeSlots: (p.timeSlots as any[]).map((s) => ({
+                id: String(s.id),
+                date: s.date as string,
+                time: s.time as string,
+                votes: s.votes as number,
+              })),
+            });
+          } else {
+            // No user session — local-only fallback
+            const maxVotes = workspace ? getWorkspaceMemberCount(workspace.members) : Math.max(poll.totalVotes, 1);
+            const updatedSlots = poll.timeSlots.map((s) =>
+              s.id === poll.selectedSlot ? { ...s, votes: s.votes + 1 } : s
+            );
+            updatePoll(pollId, {
+              votedCount: Math.min(poll.votedCount + 1, maxVotes),
+              timeSlots: updatedSlots,
+            });
+          }
+          setVotedPolls((prev) => new Set(prev).add(pollId));
+          setToast("Vote submitted successfully!");
+        } catch {
+          setToast("Failed to submit vote. Please try again.");
+        }
+        setSubmittingPoll(null);
+        setTimeout(() => setToast(null), 2800);
+      })();
     }, 1400);
   };
 

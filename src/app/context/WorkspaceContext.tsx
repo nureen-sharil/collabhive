@@ -96,10 +96,42 @@ export const workspaceStore = {
     }
   },
 
+  update: async (id: string, data: { title: string; description: string; color: string; deadline: string }): Promise<void> => {
+    const currentUserId = getStoredUserId();
+    if (!currentUserId) {
+      throw new Error("User session context missing. Please log in again.");
+    }
+    try {
+      const response = await axios.put(
+        `${API_BASE_URL}/workspaces/${id}`,
+        {
+          workspace_name: data.title,
+          description: data.description,
+          color: data.color,
+          deadline: data.deadline,
+        },
+        { params: { current_user_id: currentUserId } }
+      );
+      const updated = formatFromBackend(response.data);
+      _workspaces = _workspaces.map((w) => (w.id === id ? updated : w));
+      _notify();
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || "Failed to update workspace";
+      throw new Error(msg);
+    }
+  },
+
   remove: async (id: string): Promise<void> => {
+<<<<<<< Updated upstream
     const sessionStr = localStorage.getItem("user");
     if (!sessionStr) return;
     const currentUser = JSON.parse(sessionStr);
+=======
+    const currentUserId = getStoredUserId();
+    if (!currentUserId) {
+      throw new Error("User session context missing. Please log in again.");
+    }
+>>>>>>> Stashed changes
 
     try {
       await axios.delete(`${API_BASE_URL}/workspaces/${id}`, {
@@ -107,8 +139,9 @@ export const workspaceStore = {
       });
       _workspaces = _workspaces.filter((w) => w.id !== id);
       _notify();
-    } catch (err) {
-      console.error("Failed to remove workspace record from backend instance data store:", err);
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || "Failed to delete workspace";
+      throw new Error(msg);
     }
   },
 };
@@ -150,7 +183,12 @@ export function useWorkspaces() {
 
   return {
     workspaces: _workspaces,
+<<<<<<< Updated upstream
     addWorkspace: (data: { title: string; description: string; color: string; deadline: string }) => workspaceStore.add(data),
+=======
+    addWorkspace: (data: { title: string; description: string; color: string; deadline: string; members?: string[] }) => workspaceStore.add(data),
+    updateWorkspace: (id: string, data: { title: string; description: string; color: string; deadline: string }) => workspaceStore.update(id, data),
+>>>>>>> Stashed changes
     getWorkspace: (id: string) => workspaceStore.get(id),
     removeWorkspace: (id: string) => workspaceStore.remove(id),
   };

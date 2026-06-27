@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect, type MouseEvent } from "react";
 import { useNavigate } from "../router";
 import {
   Menu, Bell, Search, Plus, X, Edit3, Trash2,
-  MoreVertical, CaseSensitive, Check,
+  MoreVertical,
   Settings, UserCircle, LogOut, ChevronRight,
   Home, LayoutGrid, SlidersHorizontal, HelpCircle,
 } from "lucide-react";
@@ -11,6 +11,7 @@ import { NotificationOverlay } from "./NotificationOverlay";
 import { PhoneFrame } from "./PhoneFrame";
 import { GlobalToast } from "./GlobalToast";
 import { useWorkspaces } from "../context/WorkspaceContext";
+import { toastStore } from "../context/ToastStore";
 
 // ─── Left Sidebar ─────────────────────────────────────────────────────────────
 function Sidebar({ onClose, user }: { onClose: () => void, user: { name: string, email: string } }) {
@@ -143,9 +144,9 @@ function Sidebar({ onClose, user }: { onClose: () => void, user: { name: string,
 
 // ─── Card three-dot menu ──────────────────────────────────────────────────────
 function CardMenu({
-  wsId, onEdit, onRename, onDelete, onClose,
+  wsId, onEdit, onDelete, onClose,
 }: {
-  wsId: string; onEdit: () => void; onRename: () => void;
+  wsId: string; onEdit: () => void;
   onDelete: () => void; onClose: () => void;
 }) {
   return (
@@ -169,12 +170,6 @@ function CardMenu({
         <Edit3 size={13} color="#374151" /> Edit
       </button>
       <button
-        onClick={() => { onRename(); onClose(); }}
-        style={{ width:"100%",display:"flex",alignItems:"center",gap:8,padding:"10px 14px",border:"none",background:"white",cursor:"pointer",fontSize:13,color:"#111827",borderBottom:"1px solid #F3F4F6" }}
-      >
-        <CaseSensitive size={14} color="#374151" /> Rename
-      </button>
-      <button
         onClick={() => { onDelete(); onClose(); }}
         style={{ width:"100%",display:"flex",alignItems:"center",gap:8,padding:"10px 14px",border:"none",background:"#FEF2F2",cursor:"pointer",fontSize:13,color:"#DC2626" }}
       >
@@ -191,9 +186,16 @@ function DeleteConfirmModal({
   onCancel,
 }: {
   title: string;
-  onConfirm: () => void;
+  onConfirm: () => Promise<void>;
   onCancel: () => void;
 }) {
+  const [deleting, setDeleting] = useState(false);
+
+  const handleConfirm = async () => {
+    setDeleting(true);
+    await onConfirm();
+    setDeleting(false);
+  };
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -244,23 +246,35 @@ function DeleteConfirmModal({
         <div style={{ display: "flex" }}>
           <button
             onClick={onCancel}
+            disabled={deleting}
             style={{
               flex: 1, padding: "16px 0", border: "none", borderRight: "1px solid #F3F4F6",
-              background: "white", cursor: "pointer",
-              fontSize: 15, fontWeight: 600, color: "#374151",
+              background: "white", cursor: deleting ? "not-allowed" : "pointer",
+              fontSize: 15, fontWeight: 600, color: deleting ? "#9CA3AF" : "#374151",
             }}
           >
             Cancel
           </button>
           <button
-            onClick={onConfirm}
+            onClick={handleConfirm}
+            disabled={deleting}
             style={{
               flex: 1, padding: "16px 0", border: "none",
-              background: "white", cursor: "pointer",
+              background: "white", cursor: deleting ? "not-allowed" : "pointer",
               fontSize: 15, fontWeight: 700, color: "#DC2626",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
             }}
           >
-            Delete
+            {deleting ? (
+              <>
+                <motion.span
+                  animate={{ rotate: 360 }}
+                  transition={{ repeat: Infinity, duration: 0.75, ease: "linear" }}
+                  style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #FCA5A5", borderTopColor: "#DC2626", borderRadius: "50%" }}
+                />
+                Deleting…
+              </>
+            ) : "Delete"}
           </button>
         </div>
       </motion.div>
@@ -303,11 +317,6 @@ export function Dashboard() {
 
   const FILTER_OPTIONS = ["All", "In Progress", "Completed", "Not Started"] as const;
 
-  // Rename state
-  const [renamingId,  setRenamingId]  = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState("");
-  const [renamedMap,  setRenamedMap]  = useState<Record<string, string>>({});
-
   // Delete confirmation state: holds the id of the workspace pending deletion
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
 
@@ -325,14 +334,6 @@ export function Dashboard() {
       case "Completed":   return { bg: "#DCFCE7", text: "#15803D" };
       default:            return { bg: "#F3F4F6", text: "#6B7280" };
     }
-  };
-
-  const confirmRename = () => {
-    if (renamingId && renameValue.trim()) {
-      setRenamedMap((prev) => ({ ...prev, [renamingId]: renameValue.trim() }));
-    }
-    setRenamingId(null);
-    setRenameValue("");
   };
 
   return (
@@ -488,14 +489,12 @@ export function Dashboard() {
             {filtered.map((ws) => {
               const ss        = getStatusStyle(ws.status);
               const isMenuOpen = openMenu === ws.id;
-              const isRenaming = renamingId === ws.id;
-              const displayTitle = renamedMap[ws.id] ?? ws.title;
 
               return (
                 <motion.div
                   key={ws.id}
-                  whileTap={{ scale: isMenuOpen || isRenaming ? 1 : 0.97 }}
-                  onClick={() => { if (!isMenuOpen && !isRenaming) navigate(`/workspace/${ws.id}`); }}
+                  whileTap={{ scale: isMenuOpen ? 1 : 0.97 }}
+                  onClick={() => { if (!isMenuOpen) navigate(`/workspace/${ws.id}`); }}
                   style={{
                     background: "white", borderRadius: 16, aspectRatio: "1/1",
                     padding: 14, boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
@@ -523,8 +522,7 @@ export function Dashboard() {
                     {isMenuOpen && (
                       <CardMenu
                         wsId={ws.id}
-                        onEdit={() => navigate(`/workspace/${ws.id}`)}
-                        onRename={() => { setRenamingId(ws.id); setRenameValue(displayTitle); }}
+                        onEdit={() => navigate(`/workspace/${ws.id}/edit`)}
                         onDelete={() => { setOpenMenu(null); setConfirmingDelete(ws.id); }}
                         onClose={() => setOpenMenu(null)}
                       />
@@ -533,28 +531,9 @@ export function Dashboard() {
 
                   {/* Card body */}
                   <div style={{ paddingTop: 8 }}>
-                    {/* Inline rename input */}
-                    {isRenaming ? (
-                      <div style={{ display:"flex",gap:4,alignItems:"center",marginBottom:10 }} onClick={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}>
-                        <input
-                          autoFocus
-                          value={renameValue}
-                          onChange={(e) => setRenameValue(e.target.value)}
-                          onKeyPress={(e) => e.key === "Enter" && confirmRename()}
-                          style={{ flex:1,fontSize:12,fontWeight:600,color:"#111827",border:"1.5px solid #2563EB",borderRadius:6,padding:"4px 6px",outline:"none",background:"white" }}
-                        />
-                        <button
-                          onClick={(e: MouseEvent<HTMLButtonElement>) => { e.stopPropagation(); confirmRename(); }}
-                          style={{ width:24,height:24,borderRadius:"50%",background:"#2563EB",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}
-                        >
-                          <Check size={12} color="white" strokeWidth={3} />
-                        </button>
-                      </div>
-                    ) : (
                       <p style={{ fontSize:13,fontWeight:700,color:"#111827",lineHeight:1.35,marginBottom:12,display:"-webkit-box",WebkitLineClamp:3,WebkitBoxOrient:"vertical",overflow:"hidden",paddingRight:18 }}>
-                        {displayTitle}
+                        {ws.title}
                       </p>
-                    )}
 
                     {/* Progress */}
                     <div>
@@ -598,11 +577,20 @@ export function Dashboard() {
       <AnimatePresence>
         {confirmingDelete && (() => {
           const ws = workspaces.find((w) => w.id === confirmingDelete);
-          const title = ws ? (renamedMap[ws.id] ?? ws.title) : "this workspace";
+          const title = ws?.title ?? "this workspace";
           return (
             <DeleteConfirmModal
               title={title}
-              onConfirm={() => { removeWorkspace(confirmingDelete); setConfirmingDelete(null); }}
+              onConfirm={async () => {
+                try {
+                  await removeWorkspace(confirmingDelete);
+                  setConfirmingDelete(null);
+                  toastStore.show("Workspace deleted successfully.");
+                } catch (err: any) {
+                  setConfirmingDelete(null);
+                  toastStore.show(err?.message || "Failed to delete workspace. Please try again.", "error");
+                }
+              }}
               onCancel={() => setConfirmingDelete(null)}
             />
           );

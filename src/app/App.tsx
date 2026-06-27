@@ -17,6 +17,7 @@ import { TaskStatusView }    from "./components/TaskStatusView";
 import { Settings }          from "./components/Settings";
 import { FAQ }               from "./components/FAQ";
 import { EditProfile }       from "./components/EditProfile";
+import { EditWorkspace }     from "./components/EditWorkspace";
 
 import React from "react";
 
@@ -34,6 +35,7 @@ const ROUTES: { pattern: string; Component: React.ComponentType }[] = [
   { pattern: "/workspace/:id/meetings",             Component: MeetingScheduler },
   { pattern: "/workspace/:id/chat",                 Component: GroupChat        },
   { pattern: "/workspace/:id/files",                Component: FileManagement   },
+  { pattern: "/workspace/:id/edit",                 Component: EditWorkspace    },
   { pattern: "/workspace/new",                      Component: CreateWorkspace  },
   { pattern: "/workspace/:id",                      Component: WorkspaceOverview},
   { pattern: "/settings",                           Component: Settings         },

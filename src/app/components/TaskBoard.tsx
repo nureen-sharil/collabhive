@@ -36,6 +36,18 @@ function TaskCard({ task, onClick }: { task: Task; onClick: () => void }) {
         </span>
       </div>
 
+      {task.description && (
+        <p
+          className="line-clamp-2"
+          style={{
+            fontSize: 12, color: "#6B7280", marginBottom: 12, lineHeight: 1.45,
+            display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+          }}
+        >
+          {task.description}
+        </p>
+      )}
+
       {task.progress !== undefined && (
         <div className="mb-3">
           <div className="flex items-center justify-between mb-1">

@@ -125,6 +125,8 @@ function Sidebar({ onClose, user }: { onClose: () => void, user: { name: string,
             onClick={() => { 
               // Clear current user on sign out
               localStorage.removeItem("currentUser");
+              localStorage.removeItem("collabhive.auth.currentUser");
+              window.dispatchEvent(new Event("collabhive-auth-change"));
               onClose(); 
               goTo("/login"); 
             }}

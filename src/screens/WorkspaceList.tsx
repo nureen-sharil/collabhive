@@ -15,7 +15,7 @@ export function WorkspaceList() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const sessionStr = localStorage.getItem("user");
+    const sessionStr = localStorage.getItem("currentUser") ?? localStorage.getItem("collabhive.auth.currentUser");
     if (sessionStr) {
       const user = JSON.parse(sessionStr);
       if (user?.id) {

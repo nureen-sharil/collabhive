@@ -119,21 +119,21 @@ export function CreateWorkspace() {
 
   const removeMember = (email: string) => setMembers(members.filter((m) => m !== email));
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!isValid) return;
     const currentUser = getStoredCurrentUser();
     const normalizedMembers = Array.from(new Set([
       ...members,
       ...(currentUser?.email ? [currentUser.email.trim()] : []),
     ].filter(Boolean)));
-    toastStore.show("Workspace created successfully!");
-    addWorkspace({
+    await addWorkspace({
       title:       title.trim(),
       description: description.trim(),
       color:       selectedColor,
       members:     normalizedMembers,
       deadline:    dateSet ? fmtDate(month, day, year) : "TBD",
     });
+    toastStore.show("Workspace created successfully!");
     navigate("/");
   };
 

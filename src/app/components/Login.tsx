@@ -66,7 +66,11 @@ export function Login() {
       const data = await response.json();
 
       // Save the user data returned from the database to persist the session
-      localStorage.setItem("currentUser", JSON.stringify({ id: data.id, name: data.name, email: data.email }));
+      const currentUser = { id: data.id, name: data.name, email: data.email };
+      const serializedUser = JSON.stringify(currentUser);
+      localStorage.setItem("currentUser", serializedUser);
+      localStorage.setItem("collabhive.auth.currentUser", serializedUser);
+      window.dispatchEvent(new Event("collabhive-auth-change"));
 
       setFormState("success");
       // Redirects to the Dashboard screen

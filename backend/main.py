@@ -4,7 +4,7 @@ import bcrypt
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, inspect, text, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, inspect, text, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
 
@@ -85,6 +85,46 @@ class ChatMessage(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 
+class MeetingPoll(Base):
+    __tablename__ = "meeting_polls"
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    agenda = Column(String(255), nullable=False)
+    deadline = Column(String(100), nullable=False, default="")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    slots = relationship("MeetingTimeSlot", back_populates="poll", cascade="all, delete-orphan")
+    votes = relationship("MeetingVote", back_populates="poll", cascade="all, delete-orphan")
+
+
+class MeetingTimeSlot(Base):
+    __tablename__ = "meeting_time_slots"
+    id = Column(Integer, primary_key=True, index=True)
+    meeting_id = Column(Integer, ForeignKey("meeting_polls.id", ondelete="CASCADE"), nullable=False, index=True)
+    slot_order = Column(Integer, nullable=False, default=0)
+    date = Column(String(100), nullable=False)
+    time = Column(String(100), nullable=False)
+
+    poll = relationship("MeetingPoll", back_populates="slots")
+    votes = relationship("MeetingVote", back_populates="slot", cascade="all, delete-orphan")
+
+
+class MeetingVote(Base):
+    __tablename__ = "meeting_votes"
+    id = Column(Integer, primary_key=True, index=True)
+    meeting_id = Column(Integer, ForeignKey("meeting_polls.id", ondelete="CASCADE"), nullable=False, index=True)
+    slot_id = Column(Integer, ForeignKey("meeting_time_slots.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    poll = relationship("MeetingPoll", back_populates="votes")
+    slot = relationship("MeetingTimeSlot", back_populates="votes")
+
+    __table_args__ = (
+        UniqueConstraint("meeting_id", "user_id", name="uq_meeting_vote_user"),
+    )
+
+
 Base.metadata.create_all(bind=engine)
 
 def ensure_chat_message_schema():
@@ -134,9 +174,13 @@ class WorkspaceCreate(BaseModel):
     description: str | None = None
     color: str = "#2563EB"
     owner_id: int
+    member_emails: list[EmailStr] = Field(default_factory=list)
     
     # FIX: Expose validation rules for deadline inputs
     deadline: str | None = ""
+
+class WorkspaceJoinRequest(BaseModel):
+    user_id: int
 
 class WorkspaceUpdate(BaseModel):
     workspace_name: str | None = Field(None, min_length=1, max_length=100)
@@ -191,6 +235,36 @@ class ChatMessageResponse(BaseModel):
     attachmentUrl: str | None = None
     voiceDuration: str | None = None
     timestamp: datetime
+
+class MeetingSlotCreate(BaseModel):
+    date: str = Field(..., min_length=1, max_length=100)
+    time: str = Field(..., min_length=1, max_length=100)
+
+class MeetingCreate(BaseModel):
+    workspace_id: int
+    agenda: str = Field(..., min_length=1, max_length=255)
+    deadline: str = ""
+    slots: list[MeetingSlotCreate]
+
+class MeetingVoteRequest(BaseModel):
+    user_id: int
+    slot_id: int
+
+class MeetingSlotResponse(BaseModel):
+    id: int
+    date: str
+    time: str
+    votes: int
+
+class MeetingPollResponse(BaseModel):
+    id: int
+    workspace_id: int
+    agenda: str
+    totalVotes: int
+    votedCount: int
+    deadline: str
+    selectedSlot: int | None = None
+    timeSlots: list[MeetingSlotResponse]
 
 # ─── Dependencies & Security Guards ─────────────────────────────────────────
 
@@ -274,10 +348,42 @@ def create_workspace(payload: WorkspaceCreate, db: Session = Depends(get_db)):
         role="owner"
     )
     db.add(owner_membership)
+
+    invited_emails = {
+        email.strip().lower()
+        for email in payload.member_emails
+        if email.strip()
+    }
+    invited_users = []
+    if invited_emails:
+        invited_users = db.query(User).filter(User.email.in_(invited_emails)).all()
+
+    for invited_user in invited_users:
+        if invited_user.id == payload.owner_id:
+            continue
+
+        existing_membership = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == new_ws.id,
+            WorkspaceMember.user_id == invited_user.id
+        ).first()
+        if existing_membership:
+            continue
+
+        db.add(WorkspaceMember(
+            workspace_id=new_ws.id,
+            user_id=invited_user.id,
+            role="member"
+        ))
+
     db.commit()
     
-    m_user = db.query(User).filter(User.id == payload.owner_id).first()
-    members_list = [WorkspaceMemberResponse(user_id=m_user.id, name=m_user.name, email=m_user.email, role="owner")]
+    members_list = []
+    for mem in new_ws.members:
+        m_user = db.query(User).filter(User.id == mem.user_id).first()
+        if m_user:
+            members_list.append(WorkspaceMemberResponse(
+                user_id=m_user.id, name=m_user.name, email=m_user.email, role=mem.role
+            ))
     
     return WorkspaceResponse(
         id=new_ws.id, workspace_name=new_ws.workspace_name, description=new_ws.description,
@@ -307,6 +413,44 @@ def get_user_workspaces(user_id: int, db: Session = Depends(get_db)):
             deadline=ws.deadline, created_at=ws.created_at, members=m_list
         ))
     return results
+
+@app.post("/api/workspaces/{workspace_id}/join", response_model=WorkspaceResponse)
+def join_workspace(workspace_id: int, payload: WorkspaceJoinRequest, db: Session = Depends(get_db)):
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    user = db.query(User).filter(User.id == payload.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    existing_membership = db.query(WorkspaceMember).filter(
+        WorkspaceMember.workspace_id == workspace_id,
+        WorkspaceMember.user_id == payload.user_id
+    ).first()
+
+    if not existing_membership:
+        db.add(WorkspaceMember(
+            workspace_id=workspace_id,
+            user_id=payload.user_id,
+            role="owner" if ws.owner_id == payload.user_id else "member"
+        ))
+        db.commit()
+        db.refresh(ws)
+
+    m_list = []
+    for mem in ws.members:
+        m_user = db.query(User).filter(User.id == mem.user_id).first()
+        if m_user:
+            m_list.append(WorkspaceMemberResponse(
+                user_id=m_user.id, name=m_user.name, email=m_user.email, role=mem.role
+            ))
+
+    return WorkspaceResponse(
+        id=ws.id, workspace_name=ws.workspace_name, description=ws.description,
+        owner_id=ws.owner_id, color=ws.color, progress=ws.progress,
+        deadline=ws.deadline, created_at=ws.created_at, members=m_list
+    )
 
 @app.get("/api/workspaces/{workspace_id}", response_model=WorkspaceResponse)
 def get_workspace_by_id(workspace_id: int, current_user_id: int, db: Session = Depends(get_db)):
@@ -390,6 +534,120 @@ def serialize_message(message: ChatMessage, sender_name: str) -> ChatMessageResp
         voiceDuration=message.voice_duration,
         timestamp=message.created_at,
     )
+
+def serialize_meeting_poll(poll: MeetingPoll, db: Session, current_user_id: int | None = None) -> MeetingPollResponse:
+    total_members = db.query(WorkspaceMember).filter(
+        WorkspaceMember.workspace_id == poll.workspace_id
+    ).count()
+    voted_count = db.query(MeetingVote.user_id).filter(
+        MeetingVote.meeting_id == poll.id
+    ).distinct().count()
+
+    selected_slot = None
+    if current_user_id is not None:
+        current_vote = db.query(MeetingVote).filter(
+            MeetingVote.meeting_id == poll.id,
+            MeetingVote.user_id == current_user_id
+        ).first()
+        selected_slot = current_vote.slot_id if current_vote else None
+
+    slots = []
+    ordered_slots = sorted(poll.slots, key=lambda slot: (slot.slot_order, slot.id))
+    for slot in ordered_slots:
+        vote_count = db.query(MeetingVote).filter(MeetingVote.slot_id == slot.id).count()
+        slots.append(MeetingSlotResponse(
+            id=slot.id,
+            date=slot.date,
+            time=slot.time,
+            votes=vote_count
+        ))
+
+    return MeetingPollResponse(
+        id=poll.id,
+        workspace_id=poll.workspace_id,
+        agenda=poll.agenda,
+        totalVotes=total_members,
+        votedCount=voted_count,
+        deadline=poll.deadline,
+        selectedSlot=selected_slot,
+        timeSlots=slots
+    )
+
+@app.get("/api/workspaces/{workspace_id}/meetings", response_model=list[MeetingPollResponse])
+def get_workspace_meetings(workspace_id: int, current_user_id: int | None = None, db: Session = Depends(get_db)):
+    if current_user_id is not None:
+        verify_membership(workspace_id, current_user_id, db)
+
+    polls = db.query(MeetingPoll).filter(
+        MeetingPoll.workspace_id == workspace_id
+    ).order_by(MeetingPoll.created_at.desc(), MeetingPoll.id.desc()).all()
+
+    return [serialize_meeting_poll(poll, db, current_user_id) for poll in polls]
+
+@app.post("/api/workspaces/{workspace_id}/meetings", response_model=MeetingPollResponse, status_code=201)
+def create_meeting(workspace_id: int, payload: MeetingCreate, db: Session = Depends(get_db)):
+    if payload.workspace_id != workspace_id:
+        raise HTTPException(status_code=400, detail="Workspace ID mismatch")
+    if len(payload.slots) < 1:
+        raise HTTPException(status_code=400, detail="At least one time slot is required")
+
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    poll = MeetingPoll(
+        workspace_id=workspace_id,
+        agenda=payload.agenda.strip(),
+        deadline=payload.deadline
+    )
+    db.add(poll)
+    db.commit()
+    db.refresh(poll)
+
+    for index, slot in enumerate(payload.slots):
+        db.add(MeetingTimeSlot(
+            meeting_id=poll.id,
+            slot_order=index,
+            date=slot.date.strip(),
+            time=slot.time.strip()
+        ))
+
+    db.commit()
+    db.refresh(poll)
+    return serialize_meeting_poll(poll, db)
+
+@app.post("/api/meetings/{meeting_id}/vote", response_model=MeetingPollResponse)
+def vote_meeting_slot(meeting_id: int, payload: MeetingVoteRequest, db: Session = Depends(get_db)):
+    poll = db.query(MeetingPoll).filter(MeetingPoll.id == meeting_id).first()
+    if not poll:
+        raise HTTPException(status_code=404, detail="Meeting poll not found")
+
+    verify_membership(poll.workspace_id, payload.user_id, db)
+
+    slot = db.query(MeetingTimeSlot).filter(
+        MeetingTimeSlot.id == payload.slot_id,
+        MeetingTimeSlot.meeting_id == meeting_id
+    ).first()
+    if not slot:
+        raise HTTPException(status_code=404, detail="Meeting time slot not found")
+
+    existing_vote = db.query(MeetingVote).filter(
+        MeetingVote.meeting_id == meeting_id,
+        MeetingVote.user_id == payload.user_id
+    ).first()
+    if existing_vote:
+        return serialize_meeting_poll(poll, db, payload.user_id)
+
+    vote = MeetingVote(
+        meeting_id=meeting_id,
+        slot_id=payload.slot_id,
+        user_id=payload.user_id
+    )
+    db.add(vote)
+    db.commit()
+    db.refresh(poll)
+
+    return serialize_meeting_poll(poll, db, payload.user_id)
 
 @app.get("/api/workspaces/{workspace_id}/messages", response_model=list[ChatMessageResponse])
 def get_workspace_messages(workspace_id: str, db: Session = Depends(get_db)):

@@ -36,7 +36,7 @@ export function CreateWorkspace() {
       return;
     }
 
-    const sessionStr = localStorage.getItem("user");
+    const sessionStr = localStorage.getItem("currentUser") ?? localStorage.getItem("collabhive.auth.currentUser");
     if (!sessionStr) {
       setUiError("User session context missing. Re-login.");
       return;

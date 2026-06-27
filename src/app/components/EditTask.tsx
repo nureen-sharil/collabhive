@@ -4,6 +4,7 @@ import { ArrowLeft, Flag, Tag, Users, AlignLeft, ChevronDown, Calendar, Clock } 
 import { motion } from "../motion-compat";
 import { PhoneFrame } from "./PhoneFrame";
 import { useTasks, type Priority, type TaskStatus } from "../context/TaskContext";
+import { useWorkspaces } from "../context/WorkspaceContext";
 import { LoadingButton } from "./LoadingButton";
 
 const PRIORITIES: Priority[]  = ["Low", "Medium", "High"];
@@ -85,62 +86,38 @@ function fmtTime(v: TimeVal) { return `${String(v.hour).padStart(2,"0")}:${Strin
 export function EditTask() {
   const navigate = useNavigate();
   const { id, taskId } = useParams();
-  const { getTask, updateTask, tasks } = useTasks();
+  const { getTask, updateTask } = useTasks();
+  const { getWorkspace } = useWorkspaces();
+  const workspace = getWorkspace(id ?? "");
 
   const task = getTask(taskId ?? "");
 
   const assignees = useMemo(() => {
     const palette = ["#2563EB", "#7C3AED", "#DB2777", "#16A34A", "#EA580C", "#0891B2", "#D97706", "#DC2626"];
-    const map = new Map<string, { initials: string; name: string; color: string }>();
-
     const toInitials = (name: string) => {
       const parts = name.trim().split(/\s+/).filter(Boolean);
       if (parts.length === 0) return "U";
       if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
       return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
     };
-
-    try {
-      const raw = localStorage.getItem("currentUser");
-      if (raw) {
-        const parsed = JSON.parse(raw) as { name?: string; avatarColor?: string };
-        if (parsed.name) {
-          map.set(parsed.name, {
-            initials: toInitials(parsed.name),
-            name: parsed.name,
-            color: parsed.avatarColor || palette[0],
-          });
-        }
-      }
-    } catch {
-      // ignore
-    }
-
-    tasks.forEach((t, index) => {
-      const key = t.assigneeName || t.assignee;
-      if (!key || map.has(key)) return;
-      map.set(key, {
-        initials: t.assignee || toInitials(key),
-        name: t.assigneeName || key,
-        color: t.assigneeColor || palette[index % palette.length],
-      });
-    });
-
-    if (task) {
-      const taskKey = task.assigneeName || task.assignee;
-      if (taskKey && !map.has(taskKey)) {
-        map.set(taskKey, {
-          initials: task.assignee || toInitials(taskKey),
-          name: task.assigneeName || taskKey,
-          color: task.assigneeColor || palette[0],
-        });
-      }
-    }
-
-    return Array.from(map.values()).length > 0
-      ? Array.from(map.values())
+    const members = workspace?.members.filter(Boolean) ?? [];
+    const list = members.length > 0
+      ? members.map((name, index) => ({
+          initials: toInitials(String(name)),
+          name: String(name),
+          color: palette[index % palette.length],
+        }))
       : [{ initials: "U", name: "Unassigned", color: "#9CA3AF" }];
-  }, [tasks, task]);
+    // Always include the task's current assignee even if they left the workspace
+    if (task?.assigneeName && !list.find((a) => a.name === task.assigneeName)) {
+      list.push({
+        initials: task.assignee || toInitials(task.assigneeName),
+        name: task.assigneeName,
+        color: task.assigneeColor || palette[0],
+      });
+    }
+    return list;
+  }, [workspace, task]);
 
   const initialAssigneeIndex = useMemo(() => {
     if (!task) return 0;
@@ -172,7 +149,7 @@ export function EditTask() {
   const [showStatus,   setShowStatus]   = useState(false);
   const [showAssignee, setShowAssignee] = useState(false);
 
-  const isValid = title.trim().length > 0 && dateSet && timeSet;
+  const isValid = title.trim().length > 0 && dateSet;
 
   if (!task) {
     return (
@@ -409,7 +386,7 @@ export function EditTask() {
       <div className="bg-white flex-shrink-0 px-4 pt-2 pb-3" style={{ borderTop: "1px solid #F3F4F6" }}>
         {!isValid && title.trim() && (
           <p style={{ fontSize: 11, color: "#EF4444", textAlign: "center", marginBottom: 6 }}>
-            Please confirm a due date and time.
+            Please confirm a due date.
           </p>
         )}
         <LoadingButton

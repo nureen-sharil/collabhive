@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "../router";
-import { ArrowLeft, Flag, Tag, Users, AlignLeft, ChevronDown, Calendar } from "lucide-react";
+import { ArrowLeft, Flag, Tag, Users, AlignLeft, ChevronDown, Calendar, Clock } from "lucide-react";
 import { motion } from "../motion-compat";
 import { PhoneFrame } from "./PhoneFrame";
 import { useTasks, type Priority, type TaskStatus } from "../context/TaskContext";
+import { useWorkspaces } from "../context/WorkspaceContext";
 import { LoadingButton } from "./LoadingButton";
 import { toastStore } from "../context/ToastStore";
 import { CalendarPicker } from "./CalendarPicker";
@@ -87,49 +88,28 @@ function fmtTime(v: TimeVal) { return `${String(v.hour).padStart(2,"0")}:${Strin
 export function CreateTask() {
   const navigate    = useNavigate();
   const { id }      = useParams();
-  const { addTask, tasks } = useTasks();
+  const { addTask } = useTasks();
+  const { getWorkspace } = useWorkspaces();
+  const workspace = getWorkspace(id ?? "");
 
   const assignees = useMemo(() => {
     const palette = ["#2563EB", "#7C3AED", "#DB2777", "#16A34A", "#EA580C", "#0891B2", "#D97706", "#DC2626"];
-    const map = new Map<string, { initials: string; name: string; color: string }>();
-
     const toInitials = (name: string) => {
       const parts = name.trim().split(/\s+/).filter(Boolean);
       if (parts.length === 0) return "U";
       if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
       return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
     };
-
-    try {
-      const raw = localStorage.getItem("currentUser");
-      if (raw) {
-        const parsed = JSON.parse(raw) as { name?: string; avatarColor?: string };
-        if (parsed.name) {
-          map.set(parsed.name, {
-            initials: toInitials(parsed.name),
-            name: parsed.name,
-            color: parsed.avatarColor || palette[0],
-          });
-        }
-      }
-    } catch {
-      // ignore
+    const members = workspace?.members.filter(Boolean) ?? [];
+    if (members.length > 0) {
+      return members.map((name, index) => ({
+        initials: toInitials(String(name)),
+        name: String(name),
+        color: palette[index % palette.length],
+      }));
     }
-
-    tasks.forEach((t, index) => {
-      const key = t.assigneeName || t.assignee;
-      if (!key || map.has(key)) return;
-      map.set(key, {
-        initials: t.assignee || toInitials(key),
-        name: t.assigneeName || key,
-        color: t.assigneeColor || palette[index % palette.length],
-      });
-    });
-
-    return Array.from(map.values()).length > 0
-      ? Array.from(map.values())
-      : [{ initials: "U", name: "Unassigned", color: "#9CA3AF" }];
-  }, [tasks]);
+    return [{ initials: "U", name: "Unassigned", color: "#9CA3AF" }];
+  }, [workspace]);
 
   const [title,       setTitle]       = useState("");
   const [description, setDescription] = useState("");
@@ -143,6 +123,9 @@ export function CreateTask() {
   const [day,      setDay]      = useState(THIS_DAY);
   const [year,     setYear]     = useState(THIS_YEAR);
 
+  const [timeSet,  setTimeSet]  = useState(false);
+  const [timeOpen, setTimeOpen] = useState(false);
+  const [timeVal,  setTimeVal]  = useState<TimeVal>({ hour: 9, minute: 0, ampm: "AM" });
 
   const [showPriority, setShowPriority] = useState(false);
   const [showStatus,   setShowStatus]   = useState(false);
@@ -160,7 +143,7 @@ export function CreateTask() {
       priority,
       status,
       dueDate:       fmtDate(month, day, year),
-      dueTime:       "",
+      dueTime:       timeSet ? fmtTime(timeVal) : "",
       assignee:      a.initials,
       assigneeName:  a.name,
       assigneeColor: a.color,
@@ -265,7 +248,7 @@ export function CreateTask() {
           {/* Due Date */}
           <div className="bg-white rounded-2xl p-4 shadow-sm">
             <div className="flex items-center gap-1.5 mb-3"><Calendar size={13} color="#374151" /><span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>Due Date <span style={{ color: "#EF4444" }}>*</span></span></div>
-            <button onClick={() => setDateOpen(!dateOpen)} style={rowBtn(dateOpen, dateSet)}>
+            <button onClick={() => { setDateOpen(!dateOpen); setTimeOpen(false); }} style={rowBtn(dateOpen, dateSet)}>
               <div className="flex items-center gap-2">
                 <Calendar size={14} color={dateSet ? "#2563EB" : "#9CA3AF"} />
                 <span style={{ fontSize: 13, fontWeight: dateSet ? 500 : 400, color: dateSet ? "#111827" : "#9CA3AF" }}>
@@ -287,6 +270,26 @@ export function CreateTask() {
             )}
           </div>
 
+
+          {/* Due Time */}
+          <div className="bg-white rounded-2xl p-4 shadow-sm">
+            <div className="flex items-center gap-1.5 mb-3"><Clock size={13} color="#374151" /><span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>Due Time</span></div>
+            <button onClick={() => { setTimeOpen(!timeOpen); setDateOpen(false); }} style={rowBtn(timeOpen, timeSet)}>
+              <div className="flex items-center gap-2">
+                <Clock size={14} color={timeSet ? "#2563EB" : "#9CA3AF"} />
+                <span style={{ fontSize: 13, fontWeight: timeSet ? 500 : 400, color: timeSet ? "#111827" : "#9CA3AF" }}>
+                  {timeSet ? fmtTime(timeVal) : "Select time"}
+                </span>
+              </div>
+              <span style={{ fontSize: 11, color: "#9CA3AF" }}>{timeOpen ? "▲" : "▼"}</span>
+            </button>
+            {timeOpen && (
+              <div style={{ marginTop: 8, background: "white", border: "1.5px solid #E5E7EB", borderRadius: 12, padding: 12 }}>
+                <TimeRow val={timeVal} onChange={setTimeVal} />
+                <button style={confirmBtn} onClick={() => { setTimeSet(true); setTimeOpen(false); }}>Confirm Time</button>
+              </div>
+            )}
+          </div>
 
           {/* Assignee */}
           <div className="bg-white rounded-2xl p-4 shadow-sm">

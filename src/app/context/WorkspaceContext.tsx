@@ -1,7 +1,5 @@
 import { useState, useEffect, type ReactNode } from "react";
 import axios from "axios";
-import { buildApiUrl } from "../../lib/api";
-import { taskStore } from "./TaskContext";
 
 export interface Workspace {
   id: string;
@@ -15,7 +13,7 @@ export interface Workspace {
   createdAt: string;
 }
 
-const API_BASE_URL = buildApiUrl("/api");
+const API_BASE_URL = "http://mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED:8000/api";
 
 // ─── module-level singleton state ─────────────────────────────────────────────
 type Listener = () => void;
@@ -25,47 +23,6 @@ let _workspaces: Workspace[] = [];
 
 function _notify() {
   _listeners.forEach((l) => l());
-}
-
-type StoredUser = {
-  id?: number | string;
-  user_id?: number | string;
-  name?: string;
-  email?: string;
-};
-
-const USER_STORAGE_KEYS = ["currentUser", "collabhive.auth.currentUser", "ch_auth_user", "user"];
-
-function readStoredUser(): StoredUser | null {
-  for (const key of USER_STORAGE_KEYS) {
-    const sessionStr = localStorage.getItem(key);
-    if (!sessionStr) continue;
-
-    try {
-      const parsed = JSON.parse(sessionStr) as StoredUser;
-      if (parsed && typeof parsed === "object") return parsed;
-    } catch (e) {
-      console.warn(`Failed to parse ${key} session string:`, e);
-    }
-  }
-
-  return null;
-}
-
-function getStoredUserId(): number | null {
-  const user = readStoredUser();
-  const rawId = user?.id ?? user?.user_id;
-  const id = typeof rawId === "string" ? Number(rawId) : rawId;
-  return Number.isFinite(id) ? Number(id) : null;
-}
-
-function getStoredUserEmail(): string | null {
-  return readStoredUser()?.email?.trim().toLowerCase() || null;
-}
-
-function clearWorkspaceCache() {
-  _workspaces = [];
-  _notify();
 }
 
 // ─── Data conversion adapter utilities ────────────────────────────────────────
@@ -104,27 +61,28 @@ export const workspaceStore = {
   },
 
   // Expects 'deadline' input parameters matching frontend creation states
-  add: async (data: { title: string; description: string; color: string; deadline: string; members?: string[] }): Promise<string> => {
-    const currentUserId = getStoredUserId();
-    if (!currentUserId) {
-      throw new Error("User session context missing. Please log in again.");
+  add: async (data: { title: string; description: string; color: string; deadline: string }): Promise<string> => {
+    let currentUserId = 1;
+
+    const sessionStr = localStorage.getItem("user");
+    if (sessionStr) {
+      try {
+        const currentUser = JSON.parse(sessionStr);
+        if (currentUser && (currentUser.id || currentUser.user_id)) {
+          currentUserId = currentUser.id || currentUser.user_id;
+        }
+      } catch (e) {
+        console.warn("Failed to parse user session string:", e);
+      }
     }
 
     try {
-      const currentUserEmail = getStoredUserEmail();
-      const memberEmails = Array.from(new Set(
-        (data.members ?? [])
-          .map((email) => email.trim().toLowerCase())
-          .filter((email) => email && email !== currentUserEmail)
-      ));
-
       const response = await axios.post(`${API_BASE_URL}/workspaces`, {
         workspace_name: data.title,
         description: data.description,
         color: data.color,
         owner_id: currentUserId,
-        deadline: data.deadline,
-        member_emails: memberEmails
+        deadline: data.deadline // Sends deadline straight to your FastAPI backend route
       });
 
       const parsedNewWorkspace = formatFromBackend(response.data);
@@ -139,12 +97,13 @@ export const workspaceStore = {
   },
 
   remove: async (id: string): Promise<void> => {
-    const currentUserId = getStoredUserId();
-    if (!currentUserId) return;
+    const sessionStr = localStorage.getItem("user");
+    if (!sessionStr) return;
+    const currentUser = JSON.parse(sessionStr);
 
     try {
       await axios.delete(`${API_BASE_URL}/workspaces/${id}`, {
-        params: { current_user_id: currentUserId }
+        params: { current_user_id: currentUser.id }
       });
       _workspaces = _workspaces.filter((w) => w.id !== id);
       _notify();
@@ -152,47 +111,26 @@ export const workspaceStore = {
       console.error("Failed to remove workspace record from backend instance data store:", err);
     }
   },
-
-  updateProgress: async (workspaceId: string): Promise<void> => {
-    const allTasks = taskStore.getAll().filter((t) => t.workspaceId === workspaceId);
-    const total = allTasks.length;
-    const done = allTasks.filter((t) => t.status === "done").length;
-    const progress = total === 0 ? 0 : Math.round((done / total) * 100);
-
-    // Update local state immediately so the UI reflects the change without waiting for the network
-    _workspaces = _workspaces.map((w) =>
-      w.id === workspaceId
-        ? { ...w, progress, status: progress === 100 ? "Completed" : progress > 0 ? "In Progress" : "Not Started" }
-        : w
-    );
-    _notify();
-
-    const currentUserId = getStoredUserId();
-    if (!currentUserId) return;
-    try {
-      await axios.put(
-        `${API_BASE_URL}/workspaces/${workspaceId}`,
-        { progress },
-        { params: { current_user_id: currentUserId } }
-      );
-    } catch {
-      // Local state already updated above; backend will sync on next load
-    }
-  },
 };
-
-// Module-level listener: recalculate workspace progress whenever any task is added or changed
-if (typeof window !== "undefined") {
-  window.addEventListener("collabhive-tasks-changed", (e) => {
-    const workspaceId = (e as CustomEvent<{ workspaceId: string }>).detail?.workspaceId;
-    if (workspaceId) void workspaceStore.updateProgress(workspaceId);
-  });
-}
 
 // ─── hook ─────────────────────────────────────────────────────────────────────
 export function useWorkspaces() {
   const [, rerender] = useState(0);
-  const [loggedInUserId, setLoggedInUserId] = useState<number | null>(() => getStoredUserId());
+
+  // Read the active storage token context directly during render evaluation
+  const sessionStr = localStorage.getItem("user");
+  let loggedInUserId: number | null = null;
+
+  if (sessionStr) {
+    try {
+      const user = JSON.parse(sessionStr);
+      if (user?.id) {
+        loggedInUserId = user.id;
+      }
+    } catch (e) {
+      console.error("Error parsing user context string:", e);
+    }
+  }
 
   useEffect(() => {
     // Setup component notification listener
@@ -205,27 +143,14 @@ export function useWorkspaces() {
       workspaceStore.syncFromBackend(loggedInUserId);
     }
 
-    if (!loggedInUserId) {
-      clearWorkspaceCache();
-    }
-
-    const refreshUserContext = () => {
-      setLoggedInUserId(getStoredUserId());
-    };
-
-    window.addEventListener("storage", refreshUserContext);
-    window.addEventListener("collabhive-auth-change", refreshUserContext);
-
     return () => {
       _listeners.delete(listener);
-      window.removeEventListener("storage", refreshUserContext);
-      window.removeEventListener("collabhive-auth-change", refreshUserContext);
     };
   }, [loggedInUserId]); // 👈 Added dependency tracking to re-sync on login changes!
 
   return {
     workspaces: _workspaces,
-    addWorkspace: (data: { title: string; description: string; color: string; deadline: string; members?: string[] }) => workspaceStore.add(data),
+    addWorkspace: (data: { title: string; description: string; color: string; deadline: string }) => workspaceStore.add(data),
     getWorkspace: (id: string) => workspaceStore.get(id),
     removeWorkspace: (id: string) => workspaceStore.remove(id),
   };

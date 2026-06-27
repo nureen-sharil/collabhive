@@ -1,6 +1,7 @@
 import { useState, useEffect, type ReactNode } from "react";
 import axios from "axios";
 import { buildApiUrl } from "../../lib/api";
+import { taskStore } from "./TaskContext";
 
 export interface Workspace {
   id: string;
@@ -151,7 +152,42 @@ export const workspaceStore = {
       console.error("Failed to remove workspace record from backend instance data store:", err);
     }
   },
+
+  updateProgress: async (workspaceId: string): Promise<void> => {
+    const allTasks = taskStore.getAll().filter((t) => t.workspaceId === workspaceId);
+    const total = allTasks.length;
+    const done = allTasks.filter((t) => t.status === "done").length;
+    const progress = total === 0 ? 0 : Math.round((done / total) * 100);
+
+    // Update local state immediately so the UI reflects the change without waiting for the network
+    _workspaces = _workspaces.map((w) =>
+      w.id === workspaceId
+        ? { ...w, progress, status: progress === 100 ? "Completed" : progress > 0 ? "In Progress" : "Not Started" }
+        : w
+    );
+    _notify();
+
+    const currentUserId = getStoredUserId();
+    if (!currentUserId) return;
+    try {
+      await axios.put(
+        `${API_BASE_URL}/workspaces/${workspaceId}`,
+        { progress },
+        { params: { current_user_id: currentUserId } }
+      );
+    } catch {
+      // Local state already updated above; backend will sync on next load
+    }
+  },
 };
+
+// Module-level listener: recalculate workspace progress whenever any task is added or changed
+if (typeof window !== "undefined") {
+  window.addEventListener("collabhive-tasks-changed", (e) => {
+    const workspaceId = (e as CustomEvent<{ workspaceId: string }>).detail?.workspaceId;
+    if (workspaceId) void workspaceStore.updateProgress(workspaceId);
+  });
+}
 
 // ─── hook ─────────────────────────────────────────────────────────────────────
 export function useWorkspaces() {

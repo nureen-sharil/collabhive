@@ -62,11 +62,16 @@ export const taskStore = {
     _tasks = [{ ...task, id: Date.now().toString(), comments: 0 }, ..._tasks];
     writeTasksToStorage(_tasks);
     _notify();
+    window.dispatchEvent(new CustomEvent("collabhive-tasks-changed", { detail: { workspaceId: task.workspaceId } }));
   },
   update: (id: string, patch: Partial<Task>) => {
     _tasks = _tasks.map((t) => (t.id === id ? { ...t, ...patch } : t));
     writeTasksToStorage(_tasks);
     _notify();
+    const updated = _tasks.find((t) => t.id === id);
+    if (updated?.workspaceId) {
+      window.dispatchEvent(new CustomEvent("collabhive-tasks-changed", { detail: { workspaceId: updated.workspaceId } }));
+    }
   },
 };
 

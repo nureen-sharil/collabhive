@@ -13,7 +13,7 @@ export interface Workspace {
   createdAt: string;
 }
 
-const API_BASE_URL = "http://mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED:8000/api";
+const API_BASE_URL = "http://localhost:8000/api";
 
 // ─── module-level singleton state ─────────────────────────────────────────────
 type Listener = () => void;

@@ -16,7 +16,7 @@ except ImportError:
     pass
 
 # Database setup
-DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:1234@mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED:3307/collab_hive")
+DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:1234@localhost:3307/collab_hive")
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

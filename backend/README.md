@@ -62,9 +62,9 @@ mysql+pymysql://<user>:<password>@<host>:<port>/<database>
 
 | Setup | Connection String |
 |---|---|
-| XAMPP (no password, default port) | `mysql+pymysql://root:@mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED:3306/collab_hive` |
-| XAMPP (no password, port 3307) | `mysql+pymysql://root:@mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED:3307/collab_hive` |
-| XAMPP (with password) | `mysql+pymysql://root:yourpassword@mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED:3306/collab_hive` |
+| XAMPP (no password, default port) | `mysql+pymysql://root:@localhost:3306/collab_hive` |
+| XAMPP (no password, port 3307) | `mysql+pymysql://root:@localhost:3307/collab_hive` |
+| XAMPP (with password) | `mysql+pymysql://root:yourpassword@localhost:3306/collab_hive` |
 | Custom / production | `mysql+pymysql://user:password@host:port/collab_hive` |
 
 The database name must be `collab_hive`. Create it manually in MySQL before first run:
@@ -228,14 +228,14 @@ cp .env.example .env
 
 ```env
 # MySQL connection string
-DATABASE_URL=mysql+pymysql://root:@mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED:3306/collab_hive
+DATABASE_URL=mysql+pymysql://root:@localhost:3306/collab_hive
 ```
 
 **Never commit the `.env` file to source control.** It is already listed in `.gitignore`.
 
 If no `.env` file is present, the server falls back to:
 ```
-mysql+pymysql://root:1234@mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED:3307/collab_hive
+mysql+pymysql://root:1234@localhost:3307/collab_hive
 ```
 
 ---
@@ -253,11 +253,11 @@ python -m uvicorn main:app --reload --port 8001
 python -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-The server runs at `http://mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED:8000` by default.
+The server runs at `http://localhost:8000` by default.
 
 Interactive API docs (provided automatically by FastAPI):
-- **Swagger UI:** `http://mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED:8000/docs`
-- **ReDoc:** `http://mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED:8000/redoc`
+- **Swagger UI:** `http://localhost:8000/docs`
+- **ReDoc:** `http://localhost:8000/redoc`
 
 ---
 
@@ -570,4 +570,4 @@ All application code lives in `main.py`. As the codebase grows, consider splitti
 - `app/dependencies.py` — Shared dependencies (`get_db`, `verify_membership`)
 
 ### Local Development Default Port
-The default Uvicorn port is `8000`. The frontend expects the backend at `http://mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED:8000` unless `VITE_API_BASE_URL` is set in the frontend's `.env`.
+The default Uvicorn port is `8000`. The frontend expects the backend at `http://localhost:8000` unless `VITE_API_BASE_URL` is set in the frontend's `.env`.

@@ -24,7 +24,7 @@ cd collabhive
 ## 2 — Set up the database
 
 1. Start XAMPP and make sure **Apache** and **MySQL** are running.
-2. Open **phpMyAdmin** → `http://mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED/phpmyadmin`
+2. Open **phpMyAdmin** → `http://localhost/phpmyadmin`
 3. Click **New** (left sidebar) and create a database called **`collab_hive`**.
 4. Select the `collab_hive` database → click the **Import** tab.
 5. Click **Choose File**, select `database/collab_hive.sql` from this repo, then click **Go**.
@@ -43,7 +43,7 @@ cp .env.example .env
 Open `backend/.env` and update these values to match your MySQL setup:
 
 ```
-DATABASE_URL=mysql+pymysql://root:@mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED:3306/collab_hive
+DATABASE_URL=mysql+pymysql://root:@localhost:3306/collab_hive
 ```
 
 If your MySQL runs on port **3307** (common with XAMPP), change `3306` → `3307`.  
@@ -74,7 +74,7 @@ pip install fastapi uvicorn sqlalchemy pymysql bcrypt email-validator
 venv\Scripts\uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The API will be available at `http://mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED:8000`.
+The API will be available at `http://localhost:8000`.
 
 ---
 
@@ -93,7 +93,7 @@ npm install
 npm run dev
 ```
 
-Open `http://mysql://avnadmin:AVNS_KvLtKHiIDpk-wLKhpj2@mysql-c7d044d-collabhive.l.aivencloud.com:17415/defaultdb?ssl-mode=REQUIRED:5173` in your browser.
+Open `http://localhost:5173` in your browser.
 
 ---
 

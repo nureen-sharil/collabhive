@@ -97,7 +97,7 @@ function SectionHeader({ dot, label, count }: { dot: string; label: string; coun
 export function TaskBoard() {
   const navigate = useNavigate();
   const { id }   = useParams();
-  const { tasks } = useTasks();
+  const { tasks } = useTasks(id);
   const [activeFilter, setActiveFilter] = useState<Filter>("All");
 
 

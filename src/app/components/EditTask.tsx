@@ -161,20 +161,24 @@ export function EditTask() {
     );
   }
 
-  const handleSave = () => {
-    updateTask(task.id, {
-      title:        title.trim(),
-      description:  description.trim(),
-      priority,
-      status,
-      assignee:     (assignees[assigneeIdx] ?? assignees[0]).initials,
-      assigneeName: (assignees[assigneeIdx] ?? assignees[0]).name,
-      assigneeColor:(assignees[assigneeIdx] ?? assignees[0]).color,
-      dueDate:      dateSet ? fmtDate(month, day, year) : task.dueDate,
-      dueTime:      timeSet ? fmtTime(timeVal)          : task.dueTime,
-      progress:     status === "done" ? 100 : status === "inprogress" ? (task.progress ?? 50) : undefined,
-    });
-    navigate(`/workspace/${id}/tasks`);
+  const handleSave = async () => {
+    try {
+      await updateTask(task.id, {
+        title:        title.trim(),
+        description:  description.trim(),
+        priority,
+        status,
+        assignee:     (assignees[assigneeIdx] ?? assignees[0]).initials,
+        assigneeName: (assignees[assigneeIdx] ?? assignees[0]).name,
+        assigneeColor:(assignees[assigneeIdx] ?? assignees[0]).color,
+        dueDate:      dateSet ? fmtDate(month, day, year) : task.dueDate,
+        dueTime:      timeSet ? fmtTime(timeVal)          : task.dueTime,
+        progress:     status === "done" ? 100 : status === "inprogress" ? (task.progress ?? 50) : undefined,
+      });
+      navigate(`/workspace/${id}/tasks`);
+    } catch {
+      // error already logged in taskStore
+    }
   };
 
   const inputBase: React.CSSProperties = {

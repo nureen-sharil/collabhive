@@ -125,6 +125,23 @@ class MeetingVote(Base):
     )
 
 
+class Task(Base):
+    __tablename__ = "tasks"
+    id             = Column(Integer, primary_key=True, index=True)
+    workspace_id   = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    title          = Column(String(255), nullable=False)
+    description    = Column(Text, nullable=True, default="")
+    priority       = Column(String(10), nullable=False, default="Medium")
+    status         = Column(String(20), nullable=False, default="todo")
+    due_date       = Column(String(100), nullable=True, default="")
+    due_time       = Column(String(50), nullable=True, default="")
+    assignee       = Column(String(255), nullable=True, default="")
+    assignee_name  = Column(String(255), nullable=True, default="")
+    assignee_color = Column(String(20), nullable=True, default="")
+    progress       = Column(Integer, nullable=True, default=0)
+    created_at     = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 Base.metadata.create_all(bind=engine)
 
 def ensure_chat_message_schema():
@@ -249,6 +266,48 @@ class MeetingCreate(BaseModel):
 class MeetingVoteRequest(BaseModel):
     user_id: int
     slot_id: int
+
+class TaskCreate(BaseModel):
+    title:          str = Field(..., min_length=1, max_length=255)
+    description:    str | None = ""
+    priority:       str = "Medium"
+    status:         str = "todo"
+    due_date:       str | None = ""
+    due_time:       str | None = ""
+    assignee:       str | None = ""
+    assignee_name:  str | None = ""
+    assignee_color: str | None = ""
+    progress:       int | None = 0
+
+class TaskUpdate(BaseModel):
+    title:          str | None = Field(None, min_length=1, max_length=255)
+    description:    str | None = None
+    priority:       str | None = None
+    status:         str | None = None
+    due_date:       str | None = None
+    due_time:       str | None = None
+    assignee:       str | None = None
+    assignee_name:  str | None = None
+    assignee_color: str | None = None
+    progress:       int | None = Field(None, ge=0, le=100)
+
+class TaskResponse(BaseModel):
+    id:             int
+    workspace_id:   int
+    title:          str
+    description:    str | None
+    priority:       str
+    status:         str
+    due_date:       str | None
+    due_time:       str | None
+    assignee:       str | None
+    assignee_name:  str | None
+    assignee_color: str | None
+    progress:       int | None
+    created_at:     datetime
+
+    class Config:
+        from_attributes = True
 
 class MeetingSlotResponse(BaseModel):
     id: int
@@ -692,3 +751,55 @@ def send_workspace_message(workspace_id: str, request: SendMessageRequest, db: S
     db.refresh(message)
 
     return serialize_message(message, sender.name)
+
+# ─── Task Endpoints ───────────────────────────────────────────────────────────
+
+@app.get("/api/workspaces/{workspace_id}/tasks", response_model=list[TaskResponse])
+def get_workspace_tasks(workspace_id: int, db: Session = Depends(get_db)):
+    return db.query(Task).filter(Task.workspace_id == workspace_id).order_by(Task.created_at.asc()).all()
+
+@app.post("/api/workspaces/{workspace_id}/tasks", response_model=TaskResponse, status_code=201)
+def create_task(workspace_id: int, payload: TaskCreate, db: Session = Depends(get_db)):
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    task = Task(
+        workspace_id   = workspace_id,
+        title          = payload.title.strip(),
+        description    = payload.description or "",
+        priority       = payload.priority,
+        status         = payload.status,
+        due_date       = payload.due_date or "",
+        due_time       = payload.due_time or "",
+        assignee       = payload.assignee or "",
+        assignee_name  = payload.assignee_name or "",
+        assignee_color = payload.assignee_color or "",
+        progress       = payload.progress or 0,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return task
+
+@app.put("/api/tasks/{task_id}", response_model=TaskResponse)
+def update_task(task_id: int, payload: TaskUpdate, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(task, field, value)
+
+    db.commit()
+    db.refresh(task)
+    return task
+
+@app.delete("/api/tasks/{task_id}", status_code=200)
+def delete_task(task_id: int, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    db.delete(task)
+    db.commit()
+    return {"message": "Task deleted"}

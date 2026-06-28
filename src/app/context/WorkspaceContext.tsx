@@ -140,7 +140,9 @@ export const workspaceStore = {
 
   remove: async (id: string): Promise<void> => {
     const currentUserId = getStoredUserId();
-    if (!currentUserId) return;
+    if (!currentUserId) {
+      throw new Error("User session context missing. Please log in again.");
+    }
 
     try {
       await axios.delete(`${API_BASE_URL}/workspaces/${id}`, {
@@ -226,6 +228,7 @@ export function useWorkspaces() {
   return {
     workspaces: _workspaces,
     addWorkspace: (data: { title: string; description: string; color: string; deadline: string; members?: string[] }) => workspaceStore.add(data),
+    updateWorkspace: (id: string, data: { title: string; description: string; color: string; deadline: string }) => workspaceStore.update(id, data),
     getWorkspace: (id: string) => workspaceStore.get(id),
     removeWorkspace: (id: string) => workspaceStore.remove(id),
   };

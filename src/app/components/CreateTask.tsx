@@ -133,23 +133,27 @@ export function CreateTask() {
 
   const isValid = title.trim().length > 0 && dateSet;
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!isValid) return;
-    toastStore.show("Task added successfully!");
     const a = assignees[assigneeIdx] ?? assignees[0];
-    addTask({
-      title:         title.trim(),
-      description:   description.trim(),
-      priority,
-      status,
-      dueDate:       fmtDate(month, day, year),
-      dueTime:       timeSet ? fmtTime(timeVal) : "",
-      assignee:      a.initials,
-      assigneeName:  a.name,
-      assigneeColor: a.color,
-      workspaceId:   id ?? "1",
-    });
-    navigate(`/workspace/${id}/tasks`);
+    try {
+      await addTask({
+        title:         title.trim(),
+        description:   description.trim(),
+        priority,
+        status,
+        dueDate:       fmtDate(month, day, year),
+        dueTime:       timeSet ? fmtTime(timeVal) : "",
+        assignee:      a.initials,
+        assigneeName:  a.name,
+        assigneeColor: a.color,
+        workspaceId:   id ?? "1",
+      });
+      toastStore.show("Task added successfully!");
+      navigate(`/workspace/${id}/tasks`);
+    } catch {
+      toastStore.show("Failed to create task. Please try again.");
+    }
   };
 
   const inputBase: React.CSSProperties = {

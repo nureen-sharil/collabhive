@@ -172,7 +172,7 @@ export function WorkspaceOverview() {
     createdAt: "",
   };
 
-  const { tasks } = useTasks();
+  const { tasks } = useTasks(id);
 
   const wsTasks    = tasks.filter((t) => t.workspaceId === id);
   const doneTasks  = wsTasks.filter((t) => t.status === "done");

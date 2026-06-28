@@ -96,7 +96,7 @@ function TaskRow({ task, onTap }: { task: Task; onTap: () => void }) {
 export function TaskStatusView() {
   const navigate        = useNavigate();
   const { id, status }  = useParams();
-  const { tasks }       = useTasks();
+  const { tasks }       = useTasks(id);
 
   const safeStatus = (status ?? "todo") as TaskStatus;
   const meta       = STATUS_META[safeStatus] ?? STATUS_META.todo;

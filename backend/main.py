@@ -237,6 +237,7 @@ class WorkspaceUpdate(BaseModel):
     color: str | None = None
     progress: int | None = Field(None, ge=0, le=100)
     deadline: str | None = None
+    member_emails: list[EmailStr] = Field(default_factory=list)
 
 class WorkspaceMemberResponse(BaseModel):
     user_id: int
@@ -478,6 +479,69 @@ def create_pending_task_notifications_for_user(db: Session, user_id: int):
             source_id=f"{workspace.id}:{today_key}",
         )
 
+def workspace_member_responses(db: Session, workspace: Workspace) -> list[WorkspaceMemberResponse]:
+    members_list = []
+    for membership in workspace.members:
+        member_user = db.query(User).filter(User.id == membership.user_id).first()
+        if member_user:
+            members_list.append(WorkspaceMemberResponse(
+                user_id=member_user.id,
+                name=member_user.name,
+                email=member_user.email,
+                role=membership.role,
+            ))
+    return members_list
+
+def add_registered_members_to_workspace(
+    db: Session,
+    workspace: Workspace,
+    member_emails: list[EmailStr],
+    added_by: User,
+) -> None:
+    invited_emails = {
+        email.strip().lower()
+        for email in member_emails
+        if email.strip()
+    }
+    if not invited_emails:
+        return
+
+    invited_users = db.query(User).filter(User.email.in_(invited_emails)).all()
+    users_by_email = {user.email.strip().lower(): user for user in invited_users}
+    missing_emails = sorted(invited_emails - set(users_by_email.keys()))
+    if missing_emails:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Only registered users can be added. Unknown email: {missing_emails[0]}",
+        )
+
+    for invited_user in invited_users:
+        if invited_user.id == workspace.owner_id:
+            continue
+
+        existing_membership = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace.id,
+            WorkspaceMember.user_id == invited_user.id
+        ).first()
+        if existing_membership:
+            continue
+
+        db.add(WorkspaceMember(
+            workspace_id=workspace.id,
+            user_id=invited_user.id,
+            role="member"
+        ))
+        create_notification(
+            db,
+            user_id=invited_user.id,
+            workspace_id=workspace.id,
+            type="info",
+            title="Workspace Invitation",
+            message=f"You are added into {workspace.workspace_name} by {added_by.name}.",
+            source_type="workspace_invite",
+            source_id=f"{workspace.id}:{invited_user.id}",
+        )
+
 # ─── Authentication Endpoints ───────────────────────────────────────────────
 
 @app.post("/api/register")
@@ -533,8 +597,7 @@ def create_workspace(payload: WorkspaceCreate, db: Session = Depends(get_db)):
         deadline=payload.deadline
     )
     db.add(new_ws)
-    db.commit()
-    db.refresh(new_ws)
+    db.flush()
 
     owner_membership = WorkspaceMember(
         workspace_id=new_ws.id,
@@ -543,56 +606,15 @@ def create_workspace(payload: WorkspaceCreate, db: Session = Depends(get_db)):
     )
     db.add(owner_membership)
 
-    invited_emails = {
-        email.strip().lower()
-        for email in payload.member_emails
-        if email.strip()
-    }
-    invited_users = []
-    if invited_emails:
-        invited_users = db.query(User).filter(User.email.in_(invited_emails)).all()
-
-    for invited_user in invited_users:
-        if invited_user.id == payload.owner_id:
-            continue
-
-        existing_membership = db.query(WorkspaceMember).filter(
-            WorkspaceMember.workspace_id == new_ws.id,
-            WorkspaceMember.user_id == invited_user.id
-        ).first()
-        if existing_membership:
-            continue
-
-        db.add(WorkspaceMember(
-            workspace_id=new_ws.id,
-            user_id=invited_user.id,
-            role="member"
-        ))
-        create_notification(
-            db,
-            user_id=invited_user.id,
-            workspace_id=new_ws.id,
-            type="info",
-            title="Workspace Invitation",
-            message=f"You have been added to the workspace {new_ws.workspace_name}.",
-            source_type="workspace_invite",
-            source_id=f"{new_ws.id}:{invited_user.id}",
-        )
+    add_registered_members_to_workspace(db, new_ws, payload.member_emails, creator)
 
     db.commit()
-    
-    members_list = []
-    for mem in new_ws.members:
-        m_user = db.query(User).filter(User.id == mem.user_id).first()
-        if m_user:
-            members_list.append(WorkspaceMemberResponse(
-                user_id=m_user.id, name=m_user.name, email=m_user.email, role=mem.role
-            ))
+    db.refresh(new_ws)
     
     return WorkspaceResponse(
         id=new_ws.id, workspace_name=new_ws.workspace_name, description=new_ws.description,
         owner_id=new_ws.owner_id, color=new_ws.color, progress=new_ws.progress, 
-        deadline=new_ws.deadline, created_at=new_ws.created_at, members=members_list
+        deadline=new_ws.deadline, created_at=new_ws.created_at, members=workspace_member_responses(db, new_ws)
     )
 
 @app.get("/api/users/{user_id}/workspaces", response_model=list[WorkspaceResponse])
@@ -684,6 +706,10 @@ def update_workspace(workspace_id: int, current_user_id: int, payload: Workspace
     if ws.owner_id != current_user_id:
         raise HTTPException(status_code=403, detail="Only workspace owners can alter metadata settings")
 
+    current_user = db.query(User).filter(User.id == current_user_id).first()
+    if not current_user:
+        raise HTTPException(status_code=404, detail="Current user not found")
+
     if payload.workspace_name is not None:
         ws.workspace_name = payload.workspace_name.strip()
     if payload.description is not None:
@@ -694,20 +720,15 @@ def update_workspace(workspace_id: int, current_user_id: int, payload: Workspace
          ws.progress = payload.progress
     if payload.deadline is not None:
          ws.deadline = payload.deadline
+    add_registered_members_to_workspace(db, ws, payload.member_emails, current_user)
 
     db.commit()
     db.refresh(ws)
-    
-    m_list = []
-    for m in ws.members:
-        m_user = db.query(User).filter(User.id == m.user_id).first()
-        if m_user:
-            m_list.append(WorkspaceMemberResponse(user_id=m_user.id, name=m_user.name, email=m_user.email, role=m.role))
             
     return WorkspaceResponse(
         id=ws.id, workspace_name=ws.workspace_name, description=ws.description,
         owner_id=ws.owner_id, color=ws.color, progress=ws.progress, 
-        deadline=ws.deadline, created_at=ws.created_at, members=m_list
+        deadline=ws.deadline, created_at=ws.created_at, members=workspace_member_responses(db, ws)
     )
 
 @app.delete("/api/workspaces/{workspace_id}", status_code=200)

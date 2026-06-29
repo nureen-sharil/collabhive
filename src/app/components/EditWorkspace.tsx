@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "../router";
-import { ArrowLeft, Briefcase, Calendar } from "lucide-react";
+import { ArrowLeft, Briefcase, Calendar, Users } from "lucide-react";
 import { motion } from "../motion-compat";
 import { PhoneFrame } from "./PhoneFrame";
 import { useWorkspaces } from "../context/WorkspaceContext";
 import { toastStore } from "../context/ToastStore";
 import { CalendarPicker } from "./CalendarPicker";
 import { LoadingButton } from "./LoadingButton";
+import { buildApiUrl } from "../../lib/api";
 
 // ─── date helpers ─────────────────────────────────────────────────────────────
 const _now       = new Date();
@@ -50,6 +51,16 @@ const COLORS = [
   "#2563EB", "#7C3AED", "#DB2777", "#DC2626",
   "#EA580C", "#D97706", "#16A34A", "#0891B2",
 ];
+const UNREGISTERED_MEMBER_ERROR = "This email is not currently registered as user";
+
+function getStoredCurrentUser() {
+  try {
+    const raw = localStorage.getItem("currentUser") ?? localStorage.getItem("collabhive.auth.currentUser");
+    return raw ? JSON.parse(raw) as { email?: string } : null;
+  } catch {
+    return null;
+  }
+}
 
 export function EditWorkspace() {
   const navigate  = useNavigate();
@@ -68,8 +79,57 @@ export function EditWorkspace() {
   const [month,         setMonth]         = useState(parsed?.month  ?? THIS_MONTH);
   const [day,           setDay]           = useState(parsed?.day    ?? THIS_DAY);
   const [year,          setYear]          = useState(parsed?.year   ?? THIS_YEAR);
+  const [memberInput,   setMemberInput]   = useState("");
+  const [members,       setMembers]       = useState<string[]>([]);
+  const [memberError,   setMemberError]   = useState("");
+  const [checkingMember, setCheckingMember] = useState(false);
 
   const isValid = title.trim().length > 0;
+  const currentUserEmail = getStoredCurrentUser()?.email?.trim().toLowerCase() ?? "";
+  const existingMemberEmails = new Set(
+    (workspace?.memberDetails ?? [])
+      .map((member) => member.email.trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  const validateRegisteredMember = async (email: string) => {
+    if (!email || members.includes(email) || existingMemberEmails.has(email)) {
+      setMemberError("");
+      return true;
+    }
+
+    setCheckingMember(true);
+    try {
+      const response = await fetch(buildApiUrl(`/api/users/by-email/${encodeURIComponent(email)}`));
+      if (!response.ok) {
+        setMemberError(UNREGISTERED_MEMBER_ERROR);
+        return false;
+      }
+
+      setMemberError("");
+      return true;
+    } catch (error) {
+      console.error(error);
+      setMemberError(UNREGISTERED_MEMBER_ERROR);
+      return false;
+    } finally {
+      setCheckingMember(false);
+    }
+  };
+
+  const addMember = async () => {
+    const email = memberInput.trim().toLowerCase();
+    if (!email) return;
+    if (!(await validateRegisteredMember(email))) return;
+
+    if (!members.includes(email) && !existingMemberEmails.has(email) && email !== currentUserEmail) {
+      setMembers([...members, email]);
+    }
+    setMemberInput("");
+    setMemberError("");
+  };
+
+  const removeMember = (email: string) => setMembers(members.filter((m) => m !== email));
 
   const handleSave = async () => {
     if (!isValid || !id) return;
@@ -78,6 +138,7 @@ export function EditWorkspace() {
       description: description.trim(),
       color:       selectedColor,
       deadline:    dateSet ? fmtDate(month, day, year) : "TBD",
+      members,
     });
     toastStore.show("Workspace updated successfully!");
     navigate("/");
@@ -235,6 +296,90 @@ export function EditWorkspace() {
               >
                 Clear date
               </button>
+            )}
+          </div>
+
+          {/* Invite Members */}
+          <div className="bg-white rounded-2xl p-4 shadow-sm">
+            <label style={{ fontSize: 13, fontWeight: 600, color: "#374151", display: "block", marginBottom: 8 }}>
+              <span className="flex items-center gap-1.5">
+                <Users size={13} />
+                Invite Members
+              </span>
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="email"
+                value={memberInput}
+                onChange={(e) => {
+                  setMemberInput(e.target.value);
+                  if (memberError) setMemberError("");
+                }}
+                onBlur={() => {
+                  const email = memberInput.trim().toLowerCase();
+                  if (email) void validateRegisteredMember(email);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void addMember();
+                  }
+                }}
+                placeholder="Enter email address"
+                style={{ ...inputBase, flex: 1, borderColor: memberError ? "#EF4444" : "#E5E7EB" }}
+              />
+              <button
+                onClick={() => void addMember()}
+                disabled={checkingMember}
+                style={{
+                  padding: "11px 16px", borderRadius: 12,
+                  background: checkingMember ? "#93C5FD" : "#2563EB", color: "white",
+                  fontSize: 13, fontWeight: 600,
+                  border: "none", cursor: checkingMember ? "default" : "pointer", flexShrink: 0,
+                }}
+              >
+                {checkingMember ? "Checking" : "Add"}
+              </button>
+            </div>
+            {memberError && (
+              <p style={{ fontSize: 12, color: "#EF4444", marginTop: 6 }}>
+                {memberError}
+              </p>
+            )}
+
+            {members.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {members.map((email) => (
+                  <div
+                    key={email}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      background: "#EFF6FF", borderRadius: 20,
+                      padding: "4px 10px 4px 8px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 20, height: 20, borderRadius: "50%",
+                        background: selectedColor,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 10, fontWeight: 700, color: "white",
+                      }}
+                    >
+                      {email.charAt(0).toUpperCase()}
+                    </div>
+                    <span style={{ fontSize: 12, color: "#1D4ED8", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {email}
+                    </span>
+                    <button
+                      onClick={() => removeMember(email)}
+                      style={{ fontSize: 16, color: "#93C5FD", lineHeight: 1, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                    >
+                      Ã—
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 

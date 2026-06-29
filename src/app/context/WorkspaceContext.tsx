@@ -23,6 +23,14 @@ export interface WorkspaceMember {
   role: string;
 }
 
+type WorkspaceMutation = {
+  title: string;
+  description: string;
+  color: string;
+  deadline: string;
+  members?: string[];
+};
+
 const API_BASE_URL = buildApiUrl("/api");
 
 // ─── module-level singleton state ─────────────────────────────────────────────
@@ -122,7 +130,7 @@ export const workspaceStore = {
   },
 
   // Expects 'deadline' input parameters matching frontend creation states
-  add: async (data: { title: string; description: string; color: string; deadline: string; members?: string[] }): Promise<string> => {
+  add: async (data: WorkspaceMutation): Promise<string> => {
     const currentUserId = getStoredUserId();
     if (!currentUserId) {
       throw new Error("User session context missing. Please log in again.");
@@ -152,6 +160,41 @@ export const workspaceStore = {
       return parsedNewWorkspace.id;
     } catch (err: any) {
       const msg = err.response?.data?.detail || "Database workspace insertion failed";
+      throw new Error(msg);
+    }
+  },
+
+  update: async (id: string, data: WorkspaceMutation): Promise<void> => {
+    const currentUserId = getStoredUserId();
+    if (!currentUserId) {
+      throw new Error("User session context missing. Please log in again.");
+    }
+
+    try {
+      const currentUserEmail = getStoredUserEmail();
+      const memberEmails = Array.from(new Set(
+        (data.members ?? [])
+          .map((email) => email.trim().toLowerCase())
+          .filter((email) => email && email !== currentUserEmail)
+      ));
+
+      const response = await axios.put(
+        `${API_BASE_URL}/workspaces/${id}`,
+        {
+          workspace_name: data.title,
+          description: data.description,
+          color: data.color,
+          deadline: data.deadline,
+          member_emails: memberEmails,
+        },
+        { params: { current_user_id: currentUserId } }
+      );
+
+      const parsedWorkspace = formatFromBackend(response.data);
+      _workspaces = _workspaces.map((w) => w.id === id ? parsedWorkspace : w);
+      _notify();
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || "Database workspace update failed";
       throw new Error(msg);
     }
   },
@@ -245,8 +288,8 @@ export function useWorkspaces() {
 
   return {
     workspaces: _workspaces,
-    addWorkspace: (data: { title: string; description: string; color: string; deadline: string; members?: string[] }) => workspaceStore.add(data),
-    updateWorkspace: (id: string, data: { title: string; description: string; color: string; deadline: string }) => workspaceStore.update(id, data),
+    addWorkspace: (data: WorkspaceMutation) => workspaceStore.add(data),
+    updateWorkspace: (id: string, data: WorkspaceMutation) => workspaceStore.update(id, data),
     getWorkspace: (id: string) => workspaceStore.get(id),
     removeWorkspace: (id: string) => workspaceStore.remove(id),
   };

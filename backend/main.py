@@ -481,7 +481,10 @@ def create_pending_task_notifications_for_user(db: Session, user_id: int):
 
 def workspace_member_responses(db: Session, workspace: Workspace) -> list[WorkspaceMemberResponse]:
     members_list = []
-    for membership in workspace.members:
+    memberships = db.query(WorkspaceMember).filter(
+        WorkspaceMember.workspace_id == workspace.id
+    ).all()
+    for membership in memberships:
         member_user = db.query(User).filter(User.id == membership.user_id).first()
         if member_user:
             members_list.append(WorkspaceMemberResponse(
@@ -498,6 +501,7 @@ def add_registered_members_to_workspace(
     member_emails: list[EmailStr],
     added_by: User,
 ) -> None:
+    inviter_name = (added_by.name or added_by.email or "the workspace owner").strip()
     invited_emails = {
         email.strip().lower()
         for email in member_emails
@@ -516,7 +520,7 @@ def add_registered_members_to_workspace(
         )
 
     for invited_user in invited_users:
-        if invited_user.id == workspace.owner_id:
+        if invited_user.id == workspace.owner_id or invited_user.id == added_by.id:
             continue
 
         existing_membership = db.query(WorkspaceMember).filter(
@@ -531,16 +535,23 @@ def add_registered_members_to_workspace(
             user_id=invited_user.id,
             role="member"
         ))
-        create_notification(
+        db.flush()
+
+        message = f"You are added into {workspace.workspace_name} by {inviter_name}."
+        notification = create_notification(
             db,
             user_id=invited_user.id,
             workspace_id=workspace.id,
             type="info",
             title="Workspace Invitation",
-            message=f"You are added into {workspace.workspace_name} by {added_by.name}.",
+            message=message,
             source_type="workspace_invite",
             source_id=f"{workspace.id}:{invited_user.id}",
         )
+        notification.title = "Workspace Invitation"
+        notification.message = message
+        notification.workspace_id = workspace.id
+        notification.type = "info"
 
 # ─── Authentication Endpoints ───────────────────────────────────────────────
 

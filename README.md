@@ -97,6 +97,30 @@ Open `http://localhost:5173` in your browser.
 
 ---
 
+## Deploy Frontend to Vercel
+
+When importing this repository into Vercel, use:
+
+```text
+Framework Preset: Vite
+Build Command: npm run build
+Output Directory: dist
+```
+
+Add this environment variable in the Vercel project settings:
+
+```env
+VITE_API_URL=https://collabhive-4.onrender.com
+```
+
+For local development, copy `.env.example` to `.env` and keep:
+
+```env
+VITE_API_URL=http://localhost:8000
+```
+
+---
+
 ## Project structure
 
 ```

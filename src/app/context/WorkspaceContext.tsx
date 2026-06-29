@@ -11,8 +11,16 @@ export interface Workspace {
   status: "Not Started" | "In Progress" | "Completed";
   color: string;
   members: string[];
+  memberDetails: WorkspaceMember[];
   deadline: string;
   createdAt: string;
+}
+
+export interface WorkspaceMember {
+  userId: number;
+  name: string;
+  email: string;
+  role: string;
 }
 
 const API_BASE_URL = buildApiUrl("/api");
@@ -70,6 +78,15 @@ function clearWorkspaceCache() {
 
 // ─── Data conversion adapter utilities ────────────────────────────────────────
 function formatFromBackend(backendData: any): Workspace {
+  const memberDetails = Array.isArray(backendData.members)
+    ? backendData.members.map((m: any) => ({
+        userId: Number(m.user_id),
+        name: String(m.name || m.email || m.user_id || "Member"),
+        email: String(m.email || ""),
+        role: String(m.role || "member"),
+      }))
+    : [];
+
   return {
     id: String(backendData.id),
     title: backendData.workspace_name,
@@ -77,7 +94,8 @@ function formatFromBackend(backendData: any): Workspace {
     progress: backendData.progress ?? 0,
     status: backendData.progress === 100 ? "Completed" : backendData.progress > 0 ? "In Progress" : "Not Started",
     color: backendData.color || "#2563EB",
-    members: Array.isArray(backendData.members) ? backendData.members.map((m: any) => m.name || m.user_id) : [],
+    members: memberDetails.map((m: WorkspaceMember) => m.name),
+    memberDetails,
     
     // Maps the backend database field dynamically instead of hardcoding "TBD"
     deadline: backendData.deadline ? backendData.deadline.split("T")[0] : "No Deadline", 

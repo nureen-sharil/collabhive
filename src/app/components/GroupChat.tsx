@@ -43,6 +43,13 @@ interface Message {
   voice?: { duration: string };
 }
 
+interface ChatMember {
+  name: string;
+  role: string;
+  color: string;
+  online: boolean;
+}
+
 // ─── constants ────────────────────────────────────────────────────────────────
 const AVATAR_COLORS: Record<string, string> = {};
 
@@ -113,7 +120,7 @@ function writeStoredCurrentUser(user: { id?: number; name?: string; email?: stri
 }
 
 // ─── Members Panel ────────────────────────────────────────────────────────────
-function MembersPanel({ onClose, members }: { onClose: () => void; members: { name: string; role: string; color: string; online: boolean }[] }) {
+function MembersPanel({ onClose, members }: { onClose: () => void; members: ChatMember[] }) {
   const online  = members.filter((m) => m.online);
   const offline = members.filter((m) => !m.online);
   return (
@@ -346,37 +353,56 @@ export function GroupChat() {
 
   const members = useMemo(() => {
     const palette = ["#2563EB", "#7C3AED", "#DB2777", "#16A34A", "#EA580C", "#0891B2", "#D97706", "#DC2626"];
-    const map = new Map<string, { name: string; role: string; color: string; online: boolean }>();
+    const map = new Map<string, ChatMember>();
+    const currentUserKey = currentUser?.email?.trim().toLowerCase() || (currentUser?.id ? String(currentUser.id) : "");
 
-    const user = readStoredCurrentUser();
-    if (user?.name) {
-      map.set(user.name, {
-        name: user.name,
+    workspace?.memberDetails?.forEach((member, index) => {
+      const key = member.email.trim().toLowerCase() || String(member.userId || member.name);
+      const isCurrentUser = Boolean(
+        currentUserKey &&
+        (key === currentUserKey || String(member.userId) === currentUserKey)
+      );
+
+      map.set(key, {
+        name: member.name,
+        role: member.role === "owner" ? "Owner" : "Member",
+        color: palette[index % palette.length],
+        online: isCurrentUser,
+      });
+    });
+
+    tasks
+      .filter((t) => t.workspaceId === workspaceId)
+      .forEach((t, index) => {
+        const name = t.assigneeName || t.assignee || "Member";
+        const existing = Array.from(map.values()).find((member) => member.name === name);
+        if (existing) {
+          if (t.assigneeColor) existing.color = t.assigneeColor;
+          return;
+        }
+        map.set(`task-${name}`, {
+          name,
+          role: "Collaborator",
+          color: t.assigneeColor || palette[index % palette.length],
+          online: false,
+        });
+      });
+
+    if (map.size === 0 && currentUser?.name) {
+      map.set(currentUser.name, {
+        name: currentUser.name,
         role: "Member",
         color: palette[0],
         online: true,
       });
     }
 
-    tasks
-      .filter((t) => t.workspaceId === workspaceId)
-      .forEach((t, index) => {
-        const name = t.assigneeName || t.assignee || "Member";
-        if (map.has(name)) return;
-        map.set(name, {
-          name,
-          role: "Collaborator",
-          color: t.assigneeColor || palette[index % palette.length],
-          online: index < 3,
-        });
-      });
-
     if (map.size === 0) {
       map.set("Member", { name: "Member", role: "Collaborator", color: palette[0], online: true });
     }
 
     return Array.from(map.values());
-  }, [tasks, workspaceId]);
+  }, [currentUser, tasks, workspace, workspaceId]);
 
   const [messages,     setMessages]     = useState<Message[]>([]);
   const [messageInput, setMessageInput] = useState("");

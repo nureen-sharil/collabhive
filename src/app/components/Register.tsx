@@ -8,13 +8,23 @@ function isValidEmail(v: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 }
 
+function getPasswordRequirements(pw: string) {
+  return {
+    length:    pw.length >= 8,
+    uppercase: /[A-Z]/.test(pw),
+    lowercase: /[a-z]/.test(pw),
+    number:    /[0-9]/.test(pw),
+    special:   /[@#$%&!^*()_\-+=\[\]{};':"\\|,.<>\/?`~]/.test(pw),
+  };
+}
+
 function getStrength(pw: string): 0 | 1 | 2 | 3 {
   if (!pw) return 0;
-  let score = 0;
-  if (pw.length >= 8)               score++;
-  if (/[0-9]/.test(pw))             score++;
-  if (/[^a-zA-Z0-9]/.test(pw))      score++;
-  return score as 0 | 1 | 2 | 3;
+  const req = getPasswordRequirements(pw);
+  const count = Object.values(req).filter(Boolean).length;
+  if (count <= 2) return 1;
+  if (count <= 4) return 2;
+  return 3;
 }
 
 const STRENGTH_META = [
@@ -52,6 +62,8 @@ export function Register() {
 
   const strength = getStrength(password);
   const sm = STRENGTH_META[strength];
+  const passwordReqs = getPasswordRequirements(password);
+  const passwordValid = Object.values(passwordReqs).every(Boolean);
 
   // Field errors
   const nameErr    = touched.name    && !name.trim()            ? "Full name is required" : "";
@@ -59,12 +71,11 @@ export function Register() {
                      touched.email   && !isValidEmail(email)    ? "Email format is invalid" :
                      touched.email   && emailTaken              ? "Email already exists" : "";
   const passErr    = touched.password && !password              ? "Password is required" :
-                     touched.password && password.length < 8    ? "Password must be at least 8 characters" :
-                     touched.password && strength === 1         ? "Password is too weak — add numbers or symbols" : "";
+                     touched.password && !passwordValid         ? "Password does not meet all requirements" : "";
   const confirmErr = touched.confirm && !confirm                ? "Please confirm your password" :
                      touched.confirm && confirm !== password     ? "Passwords do not match" : "";
 
-  const canSubmit = name.trim() && isValidEmail(email) && password.length >= 8 && strength >= 2 && confirm === password;
+  const canSubmit = name.trim() && isValidEmail(email) && passwordValid && confirm === password;
 
   const handleRegister = async () => {
     setTouch({ name: true, email: true, password: true, confirm: true });
@@ -210,6 +221,28 @@ export function Register() {
                 <p style={{ fontSize: 11, color: sm.color, fontWeight: 600 }}>
                   {sm.label && `Password strength: ${sm.label}`}
                 </p>
+              </div>
+            )}
+
+            {/* Requirements checklist */}
+            {(password.length > 0 || touched.password) && (
+              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 3 }}>
+                {([
+                  { key: "length",    label: "At least 8 characters" },
+                  { key: "uppercase", label: "At least one uppercase letter (A–Z)" },
+                  { key: "lowercase", label: "At least one lowercase letter (a–z)" },
+                  { key: "number",    label: "At least one number (0–9)" },
+                  { key: "special",   label: "At least one special character (@, #, $, %, &, !)" },
+                ] as { key: keyof ReturnType<typeof getPasswordRequirements>; label: string }[]).map(({ key, label }) => (
+                  <div key={key} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    {passwordReqs[key]
+                      ? <CheckCircle size={12} color="#16A34A" />
+                      : <AlertCircle size={12} color={touched.password ? "#EF4444" : "#9CA3AF"} />}
+                    <span style={{ fontSize: 11, color: passwordReqs[key] ? "#16A34A" : touched.password ? "#EF4444" : "#6B7280" }}>
+                      {label}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
             <FieldError msg={passErr} />

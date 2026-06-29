@@ -229,6 +229,9 @@ cp .env.example .env
 ```env
 # MySQL connection string
 DATABASE_URL=mysql+pymysql://root:@localhost:3306/collab_hive
+
+# auto enables SSL for hosted MySQL and disables it for localhost
+DATABASE_SSL=auto
 ```
 
 **Never commit the `.env` file to source control.** It is already listed in `.gitignore`.
@@ -237,6 +240,21 @@ If no `.env` file is present, the server falls back to:
 ```
 mysql+pymysql://root:1234@localhost:3307/collab_hive
 ```
+
+### Render + Aiven
+
+For Render, keep your Aiven credentials in Render environment variables, not in Git:
+
+```env
+DATABASE_URL=mysql+pymysql://avnadmin:<AIVEN_PASSWORD>@<AIVEN_HOST>:<AIVEN_PORT>/defaultdb
+DATABASE_SSL=true
+```
+
+If you use the included root `render.yaml`, Render will:
+
+- use `backend/` as the service root
+- run `pip install -r requirements.txt`
+- start the app with `python -m uvicorn main:app --host 0.0.0.0 --port $PORT`
 
 ---
 

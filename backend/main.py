@@ -7,6 +7,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, inspect, text, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
+from sqlalchemy.engine.url import make_url
 
 # Load .env file if present
 try:
@@ -17,14 +18,19 @@ except ImportError:
 
 # Database setup
 DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:1234@localhost:3307/collab_hive")
+DATABASE_SSL = os.getenv("DATABASE_SSL", "auto").lower()
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    connect_args={
-        "ssl": {}
-    }
-)
+database_url = make_url(DATABASE_URL)
+database_host = database_url.host
+is_local_database = database_host in {"localhost", "127.0.0.1", "::1"}
+connect_args = {}
+
+if DATABASE_SSL == "true" or (DATABASE_SSL == "auto" and database_url.drivername.startswith("mysql") and not is_local_database):
+    connect_args["ssl"] = {}
+
+print("DATABASE_URL =", database_url.render_as_string(hide_password=True))
+
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -39,6 +45,11 @@ app.add_middleware(
 )
 
 # ─── Database Models ──────────────────────────────────────────────────────────
+
+@app.get("/")
+def health_check():
+    return {"status": "ok", "service": "collabhive-backend"}
+
 
 class User(Base):
     __tablename__ = "users"

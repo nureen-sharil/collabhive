@@ -1,20 +1,22 @@
-# ── Node ──────────────────────────────────────────────────────────────────────
+# Node
 node_modules
 dist
 
-# ── Python / backend ─────────────────────────────────────────────────────────
+# Python / backend
 backend/venv
 backend/__pycache__
 backend/**/__pycache__
 backend/**/*.pyc
 backend/**/*.pyo
+backend/*.db
 
-# ── Environment secrets (NEVER commit real credentials) ───────────────────────
+# Environment secrets
 .env
 backend/.env
 *.env
 
-# ── OS / editor noise ────────────────────────────────────────────────────────
+# OS / editor noise
 .DS_Store
 Thumbs.db
 .vscode/settings.json
+node_modules

@@ -4,7 +4,7 @@ import bcrypt
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, inspect, text, ForeignKey, UniqueConstraint
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, inspect, text, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
 from sqlalchemy.engine.url import make_url
@@ -157,6 +157,21 @@ class Task(Base):
     assignee_color = Column(String(20), nullable=True, default="")
     progress       = Column(Integer, nullable=True, default=0)
     created_at     = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=True, index=True)
+    type = Column(String(30), nullable=False, default="info")
+    title = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+    source_type = Column(String(50), nullable=True, index=True)
+    source_id = Column(String(100), nullable=True, index=True)
+    is_read = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    read_at = Column(DateTime, nullable=True)
 
 
 Base.metadata.create_all(bind=engine)
@@ -342,6 +357,22 @@ class MeetingPollResponse(BaseModel):
     selectedSlot: int | None = None
     timeSlots: list[MeetingSlotResponse]
 
+class NotificationResponse(BaseModel):
+    id: int
+    user_id: int
+    workspace_id: int | None
+    type: str
+    title: str
+    message: str
+    source_type: str | None
+    source_id: str | None
+    is_read: bool
+    created_at: datetime
+    read_at: datetime | None
+
+    class Config:
+        from_attributes = True
+
 # ─── Dependencies & Security Guards ─────────────────────────────────────────
 
 def get_db():
@@ -359,6 +390,93 @@ def verify_membership(workspace_id: int, user_id: int, db: Session):
     if not member:
         raise HTTPException(status_code=403, detail="Access denied: You are not a member of this workspace")
     return member
+
+def create_notification(
+    db: Session,
+    user_id: int,
+    title: str,
+    message: str,
+    type: str = "info",
+    workspace_id: int | None = None,
+    source_type: str | None = None,
+    source_id: str | None = None,
+):
+    if source_type and source_id:
+        existing = db.query(Notification).filter(
+            Notification.user_id == user_id,
+            Notification.source_type == source_type,
+            Notification.source_id == str(source_id),
+        ).first()
+        if existing:
+            return existing
+
+    notification = Notification(
+        user_id=user_id,
+        workspace_id=workspace_id,
+        type=type,
+        title=title,
+        message=message,
+        source_type=source_type,
+        source_id=str(source_id) if source_id is not None else None,
+    )
+    db.add(notification)
+    return notification
+
+def member_user_ids_for_workspace(db: Session, workspace_id: int) -> list[int]:
+    return [
+        row.user_id
+        for row in db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == workspace_id).all()
+    ]
+
+def task_recipient_ids(db: Session, workspace: Workspace, task: Task) -> list[int]:
+    assignee_name = (task.assignee_name or "").strip().lower()
+    assignee_initials = (task.assignee or "").strip().lower()
+
+    if assignee_name and assignee_name != "unassigned":
+        rows = (
+            db.query(WorkspaceMember, User)
+            .join(User, WorkspaceMember.user_id == User.id)
+            .filter(WorkspaceMember.workspace_id == workspace.id)
+            .all()
+        )
+        for membership, user in rows:
+            initials = "".join(part[0] for part in user.name.split()[:2]).lower()
+            if user.name.strip().lower() == assignee_name or initials == assignee_initials:
+                return [membership.user_id]
+
+    return member_user_ids_for_workspace(db, workspace.id)
+
+def create_pending_task_notifications_for_user(db: Session, user_id: int):
+    today_key = datetime.utcnow().strftime("%Y-%m-%d")
+    memberships = db.query(WorkspaceMember).filter(WorkspaceMember.user_id == user_id).all()
+
+    for membership in memberships:
+        workspace = db.query(Workspace).filter(Workspace.id == membership.workspace_id).first()
+        if not workspace:
+            continue
+
+        tasks = db.query(Task).filter(
+            Task.workspace_id == workspace.id,
+            Task.status != "done",
+        ).all()
+
+        relevant_tasks = [
+            task for task in tasks
+            if user_id in task_recipient_ids(db, workspace, task)
+        ]
+        if not relevant_tasks:
+            continue
+
+        create_notification(
+            db,
+            user_id=user_id,
+            workspace_id=workspace.id,
+            type="warning",
+            title="Pending Tasks",
+            message=f"You have {len(relevant_tasks)} pending task{'s' if len(relevant_tasks) != 1 else ''} in {workspace.workspace_name} that need completion.",
+            source_type="task_daily_summary",
+            source_id=f"{workspace.id}:{today_key}",
+        )
 
 # ─── Authentication Endpoints ───────────────────────────────────────────────
 
@@ -450,6 +568,16 @@ def create_workspace(payload: WorkspaceCreate, db: Session = Depends(get_db)):
             user_id=invited_user.id,
             role="member"
         ))
+        create_notification(
+            db,
+            user_id=invited_user.id,
+            workspace_id=new_ws.id,
+            type="info",
+            title="Workspace Invitation",
+            message=f"You have been added to the workspace {new_ws.workspace_name}.",
+            source_type="workspace_invite",
+            source_id=f"{new_ws.id}:{invited_user.id}",
+        )
 
     db.commit()
     
@@ -594,6 +722,44 @@ def delete_workspace(workspace_id: int, current_user_id: int, db: Session = Depe
     db.delete(ws)
     db.commit()
     return {"message": "Workspace successfully removed"}
+
+@app.get("/api/users/{user_id}/notifications", response_model=list[NotificationResponse])
+def get_user_notifications(user_id: int, db: Session = Depends(get_db)):
+    create_pending_task_notifications_for_user(db, user_id)
+    db.commit()
+
+    return db.query(Notification).filter(
+        Notification.user_id == user_id
+    ).order_by(Notification.created_at.desc(), Notification.id.desc()).all()
+
+@app.patch("/api/notifications/{notification_id}/read", response_model=NotificationResponse)
+def mark_notification_read(notification_id: int, current_user_id: int, db: Session = Depends(get_db)):
+    notification = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.user_id == current_user_id,
+    ).first()
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found")
+
+    notification.is_read = True
+    notification.read_at = datetime.utcnow()
+    db.commit()
+    db.refresh(notification)
+    return notification
+
+@app.post("/api/users/{user_id}/notifications/read-all")
+def mark_all_notifications_read(user_id: int, db: Session = Depends(get_db)):
+    notifications = db.query(Notification).filter(
+        Notification.user_id == user_id,
+        Notification.is_read == False,  # noqa: E712
+    ).all()
+    now = datetime.utcnow()
+    for notification in notifications:
+        notification.is_read = True
+        notification.read_at = now
+
+    db.commit()
+    return {"message": "Notifications marked as read", "count": len(notifications)}
 
 # ─── Chat Legacy Endpoints (Unchanged) ──────────────────────────────────────
 
@@ -797,6 +963,20 @@ def create_task(workspace_id: int, payload: TaskCreate, db: Session = Depends(ge
     db.add(task)
     db.commit()
     db.refresh(task)
+
+    for user_id in task_recipient_ids(db, ws, task):
+        create_notification(
+            db,
+            user_id=user_id,
+            workspace_id=ws.id,
+            type="warning" if task.priority == "High" else "info",
+            title="Task Assigned",
+            message=f"You have a pending task in {ws.workspace_name}: {task.title}.",
+            source_type="task_assignment",
+            source_id=f"{task.id}:{user_id}",
+        )
+    db.commit()
+
     return task
 
 @app.put("/api/tasks/{task_id}", response_model=TaskResponse)

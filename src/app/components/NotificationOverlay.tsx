@@ -1,9 +1,7 @@
-import React, { useState } from "react";
-import { motion, AnimatePresence } from "../motion-compat";
-import { Bell, X, Clock, AlertCircle, CheckCircle, Calendar, ArrowLeft, Trash2 } from "lucide-react";
-import { useWorkspaces } from "../context/WorkspaceContext";
-import { useTasks } from "../context/TaskContext";
-import { useMeetings } from "../context/MeetingContext";
+import { useEffect, useState, type MouseEvent } from "react";
+import { motion } from "../motion-compat";
+import { Bell, X, Clock, AlertCircle, CheckCircle, Calendar, ArrowLeft, Users } from "lucide-react";
+import { buildApiUrl } from "../../lib/api";
 
 interface NotificationOverlayProps {
   onClose: () => void;
@@ -11,12 +9,13 @@ interface NotificationOverlayProps {
 
 type OverlayNotification = {
   id: number;
-  icon: any;
   type: "warning" | "info" | "success" | "alert";
   title: string;
   message: string;
-  time: string;
-  workspace: string;
+  created_at: string;
+  workspace_id: number | null;
+  source_type: string | null;
+  is_read: boolean;
 };
 
 const TYPE_STYLE: Record<string, { bg: string; text: string }> = {
@@ -26,46 +25,117 @@ const TYPE_STYLE: Record<string, { bg: string; text: string }> = {
   alert:   { bg: "#FEE2E2", text: "#DC2626" },
 };
 
+function getStoredUserId() {
+  const keys = ["currentUser", "collabhive.auth.currentUser"];
+  for (const key of keys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as { id?: unknown; user_id?: unknown };
+      const id = Number(parsed.id ?? parsed.user_id);
+      if (Number.isFinite(id)) return id;
+    } catch {
+      // Ignore malformed session storage.
+    }
+  }
+  return null;
+}
+
+function formatNotificationTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Recent";
+
+  const minutes = Math.floor((Date.now() - date.getTime()) / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function iconForNotification(notification: OverlayNotification) {
+  if (notification.source_type === "workspace_invite") return Users;
+  if (notification.source_type?.startsWith("task")) return Clock;
+  if (notification.type === "success") return CheckCircle;
+  if (notification.type === "alert") return AlertCircle;
+  if (notification.type === "info") return Calendar;
+  return Clock;
+}
+
 export function NotificationOverlay({ onClose }: NotificationOverlayProps) {
-  const { workspaces } = useWorkspaces();
-  const { tasks } = useTasks();
-  const { polls } = useMeetings();
-
-  const workspaceById = new Map(workspaces.map((ws) => [ws.id, ws.title]));
-
-  const allNotifications: OverlayNotification[] = [
-    ...tasks.map((task, index) => ({
-      id: Number(`${task.id}`.replace(/\D/g, "")) || Date.now() + index,
-      icon: task.status === "done" ? CheckCircle : task.priority === "High" ? AlertCircle : Clock,
-      type: task.status === "done" ? "success" as const : task.priority === "High" ? "alert" as const : "warning" as const,
-      title: task.status === "done" ? "Task Completed" : "Task Update",
-      message: task.title,
-      time: "Recent",
-      workspace: workspaceById.get(task.workspaceId) || "Workspace",
-    })),
-    ...polls.map((poll, index) => ({
-      id: Number(`${poll.id}`.replace(/\D/g, "")) || Date.now() + 1000 + index,
-      icon: Calendar,
-      type: "info" as const,
-      title: "Meeting Poll",
-      message: poll.agenda || "Meeting details available",
-      time: "Recent",
-      workspace: workspaceById.get(poll.workspaceId) || "Workspace",
-    })),
-  ];
-
   const [viewAll, setViewAll] = useState(false);
-  const [dismissed, setDismissed] = useState<Set<number>>(new Set());
-  const [readIds,   setReadIds]   = useState<Set<number>>(new Set());
+  const [notifications, setNotifications] = useState<OverlayNotification[]>([]);
+  const [loading, setLoading] = useState(true);
+  const userId = getStoredUserId();
 
-  const visible    = allNotifications.filter((n) => !dismissed.has(n.id));
-  const preview    = visible.slice(0, 4);
-  const displayed  = viewAll ? visible : preview;
-  const unreadCount = visible.filter((n) => !readIds.has(n.id)).length;
+  useEffect(() => {
+    let cancelled = false;
 
-  const markRead = (id: number) => setReadIds((prev) => new Set(prev).add(id));
-  const dismiss  = (id: number) => { setDismissed((prev) => new Set(prev).add(id)); setReadIds((prev) => new Set(prev).add(id)); };
-  const markAll  = () => setReadIds(new Set(visible.map((n) => n.id)));
+    const loadNotifications = async () => {
+      if (!userId) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const response = await fetch(buildApiUrl(`/api/users/${userId}/notifications`), {
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error(`Failed to load notifications: ${response.status}`);
+
+        const data = await response.json() as OverlayNotification[];
+        if (!cancelled) setNotifications(Array.isArray(data) ? data : []);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    loadNotifications();
+    const intervalId = window.setInterval(loadNotifications, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [userId]);
+
+  const visible = notifications.filter((n) => !n.is_read);
+  const preview = visible.slice(0, 4);
+  const displayed = viewAll ? visible : preview;
+  const unreadCount = visible.length;
+
+  const markRead = async (id: number) => {
+    if (!userId) return;
+
+    setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, is_read: true } : n));
+    try {
+      await fetch(buildApiUrl(`/api/notifications/${id}/read?current_user_id=${userId}`), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const markAll = async () => {
+    if (!userId) return;
+
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    try {
+      await fetch(buildApiUrl(`/api/users/${userId}/notifications/read-all`), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (error) {
+      console.error(error);
+    }
+  };
 
   return (
     <motion.div
@@ -82,10 +152,9 @@ export function NotificationOverlay({ onClose }: NotificationOverlayProps) {
         exit={{ y: -100, opacity: 0 }}
         transition={{ type: "spring", damping: 25, stiffness: 300 }}
         className="bg-white rounded-2xl shadow-2xl w-full mt-14"
-        style={{ maxHeight: "80%" , display: "flex", flexDirection: "column" }}
+        style={{ maxHeight: "80%", display: "flex", flexDirection: "column" }}
         onClick={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-3">
             {viewAll && (
@@ -104,14 +173,14 @@ export function NotificationOverlay({ onClose }: NotificationOverlayProps) {
                 {viewAll ? "All Notifications" : "Notifications"}
               </h3>
               <p style={{ fontSize: 11, color: "#6B7280" }}>
-                {unreadCount > 0 ? `${unreadCount} unread` : "All caught up ✓"}
+                {unreadCount > 0 ? `${unreadCount} unread` : "All caught up"}
               </p>
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {unreadCount > 0 && (
               <button
-                onClick={markAll}
+                onClick={() => void markAll()}
                 style={{ fontSize: 11, color: "#2563EB", fontWeight: 600, background: "none", border: "none", cursor: "pointer" }}
               >
                 Mark all read
@@ -126,65 +195,63 @@ export function NotificationOverlay({ onClose }: NotificationOverlayProps) {
           </div>
         </div>
 
-        {/* List */}
         <div style={{ overflowY: "auto", flex: 1 }}>
-          {displayed.length === 0 ? (
+          {loading ? (
             <div style={{ textAlign: "center", padding: "40px 20px" }}>
               <Bell size={32} color="#D1D5DB" style={{ margin: "0 auto 10px" }} />
-              <p style={{ fontSize: 14, fontWeight: 600, color: "#374151" }}>No notifications</p>
-              <p style={{ fontSize: 12, color: "#9CA3AF", marginTop: 4 }}>You're all caught up!</p>
+              <p style={{ fontSize: 14, fontWeight: 600, color: "#374151" }}>Loading notifications...</p>
+            </div>
+          ) : displayed.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "40px 20px" }}>
+              <Bell size={32} color="#D1D5DB" style={{ margin: "0 auto 10px" }} />
+              <p style={{ fontSize: 14, fontWeight: 600, color: "#374151" }}>You're all caught up!</p>
+              <p style={{ fontSize: 12, color: "#9CA3AF", marginTop: 4 }}>No unread notifications.</p>
             </div>
           ) : (
             displayed.map((n, index) => {
-              const Icon    = n.icon;
-              const style   = TYPE_STYLE[n.type];
-              const isRead  = readIds.has(n.id);
+              const Icon = iconForNotification(n);
+              const style = TYPE_STYLE[n.type] ?? TYPE_STYLE.info;
               return (
                 <motion.div
                   key={n.id}
                   initial={{ opacity: 0, x: -16 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.04 }}
-                  onClick={() => markRead(n.id)}
                   style={{
                     padding: "12px 16px",
                     borderBottom: "1px solid #F9FAFB",
-                    cursor: "pointer",
-                    background: isRead ? "white" : "#FAFBFF",
+                    background: "#FAFBFF",
                     display: "flex", gap: 12, alignItems: "flex-start",
                   }}
                   className="hover:bg-gray-50 transition-colors"
                 >
-                  {/* Unread dot */}
                   <div style={{ paddingTop: 4, flexShrink: 0 }}>
-                    <div style={{ width: 7, height: 7, borderRadius: "50%", background: isRead ? "transparent" : "#2563EB" }} />
+                    <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#2563EB" }} />
                   </div>
 
-                  {/* Icon */}
                   <div style={{ width: 36, height: 36, borderRadius: "50%", background: style.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <Icon size={16} color={style.text} />
                   </div>
 
-                  {/* Content */}
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontSize: 13, fontWeight: isRead ? 500 : 700, color: "#111827", marginBottom: 2 }}>{n.title}</p>
+                    <p style={{ fontSize: 13, fontWeight: 700, color: "#111827", marginBottom: 2 }}>{n.title}</p>
                     <p style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.4, marginBottom: 4 }}>{n.message}</p>
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ fontSize: 10, color: "#9CA3AF" }}>{n.time}</span>
+                      <span style={{ fontSize: 10, color: "#9CA3AF" }}>{formatNotificationTime(n.created_at)}</span>
                       <span style={{ fontSize: 10, color: "#D1D5DB" }}>·</span>
                       <span style={{ fontSize: 10, color: style.text, fontWeight: 500, background: style.bg, borderRadius: 10, padding: "1px 6px" }}>
-                        {n.workspace.split(" ").slice(0, 2).join(" ")}
+                        {n.source_type === "workspace_invite" ? "Workspace" : "Task"}
                       </span>
                     </div>
                   </div>
 
-                  {/* Dismiss */}
                   <button
-                    onClick={(e) => { e.stopPropagation(); dismiss(n.id); }}
-                    style={{ width: 24, height: 24, borderRadius: "50%", background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
-                    className="hover:bg-red-50"
+                    onClick={() => void markRead(n.id)}
+                    title="Mark as Read"
+                    style={{ width: 28, height: 28, borderRadius: "50%", background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                    className="hover:bg-blue-50"
                   >
-                    <Trash2 size={13} color="#D1D5DB" />
+                    <CheckCircle size={15} color="#9CA3AF" />
                   </button>
                 </motion.div>
               );
@@ -192,7 +259,6 @@ export function NotificationOverlay({ onClose }: NotificationOverlayProps) {
           )}
         </div>
 
-        {/* Footer */}
         {!viewAll && visible.length > 4 && (
           <div style={{ padding: "10px 16px", borderTop: "1px solid #F3F4F6", flexShrink: 0 }}>
             <button
@@ -203,8 +269,6 @@ export function NotificationOverlay({ onClose }: NotificationOverlayProps) {
             </button>
           </div>
         )}
-
-        {viewAll && visible.length === 0 && null}
       </motion.div>
     </motion.div>
   );

@@ -888,6 +888,22 @@ def create_meeting(workspace_id: int, payload: MeetingCreate, db: Session = Depe
 
     db.commit()
     db.refresh(poll)
+
+    # Notify all workspace members to vote on the new meeting poll
+    member_ids = member_user_ids_for_workspace(db, workspace_id)
+    for member_id in member_ids:
+        create_notification(
+            db,
+            user_id=member_id,
+            workspace_id=workspace_id,
+            type="info",
+            title="New Meeting Poll",
+            message=f"A new meeting has been scheduled in \"{workspace.workspace_name}\": \"{poll.agenda}\". Please vote on your preferred time slot.",
+            source_type="meeting_vote_request",
+            source_id=f"{poll.id}:{member_id}",
+        )
+    db.commit()
+
     return serialize_meeting_poll(poll, db)
 
 @app.post("/api/meetings/{meeting_id}/vote", response_model=MeetingPollResponse)
